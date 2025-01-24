@@ -19,10 +19,6 @@ const Flat = struct {
     };
 
     fn convert(flat: *const Flat, allocator: std.mem.Allocator) !R1CS {
-        const A = try allocator.alloc([]const i32, flat.instructions.len);
-        const B = try allocator.alloc([]const i32, flat.instructions.len);
-        const C = try allocator.alloc([]const i32, flat.instructions.len);
-
         var used: std.AutoHashMapUnmanaged(Variable, void) = .{};
         defer used.deinit(allocator);
         for (flat.inputs) |input| {
@@ -32,26 +28,31 @@ const Flat = struct {
         var variables = vars: {
             var list = std.AutoArrayHashMap(Variable, void).init(allocator);
             try list.putNoClobber(.one, {});
-            for (flat.inputs) |input| {
-                try list.putNoClobber(input, {});
-            }
-            try list.put(.out, {});
+            for (flat.inputs) |input| try list.putNoClobber(input, {});
+            try list.putNoClobber(.out, {});
             for (flat.instructions) |inst| {
                 if (std.mem.indexOfScalar(Variable, flat.inputs, inst.dest) != null) continue;
                 if (inst.dest == .out) continue;
-                try list.put(inst.dest, {});
+                try list.putNoClobber(inst.dest, {});
             }
             break :vars list;
         };
         defer variables.deinit();
 
+        const num_variables = variables.count();
+        const total_size = flat.instructions.len * num_variables;
+        const A = try allocator.alloc(i32, total_size);
+        const B = try allocator.alloc(i32, total_size);
+        const C = try allocator.alloc(i32, total_size);
+        @memset(A, 0);
+        @memset(B, 0);
+        @memset(C, 0);
+
         for (flat.instructions, 0..) |inst, i| {
-            var a = try allocator.alloc(i32, variables.count());
-            var b = try allocator.alloc(i32, variables.count());
-            var c = try allocator.alloc(i32, variables.count());
-            @memset(a, 0);
-            @memset(b, 0);
-            @memset(c, 0);
+            const offset = i * num_variables;
+            const a = A[offset..][0..num_variables];
+            const b = B[offset..][0..num_variables];
+            const c = C[offset..][0..num_variables];
 
             const gop = try used.getOrPut(allocator, inst.dest);
             if (gop.found_existing) {
@@ -76,16 +77,14 @@ const Flat = struct {
                     b[variables.getIndex(inst.rhs).?] += 1;
                 },
             }
-
-            A[i] = a;
-            B[i] = b;
-            C[i] = c;
         }
 
         return .{
-            .A = A,
-            .B = B,
-            .C = C,
+            .rows = flat.instructions.len,
+            .columns = num_variables,
+            .a = A,
+            .b = B,
+            .c = C,
             .r = try flat.computeInput(&variables, allocator),
         };
     }
@@ -182,11 +181,14 @@ const Variable = enum(u32) {
 };
 
 const R1CS = struct {
-    const Matrix = []const []const i32;
+    /// The number of rows in each matrix.
+    rows: usize,
+    /// The number of columns in each matrix.
+    columns: usize,
 
-    A: Matrix,
-    B: Matrix,
-    C: Matrix,
+    a: []const i32,
+    b: []const i32,
+    c: []const i32,
     r: []const i32,
 
     pub fn format(
@@ -195,30 +197,36 @@ const R1CS = struct {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        inline for (@typeInfo(R1CS).Struct.fields[0..3]) |field| {
-            try writer.print("{s}:\n", .{field.name});
-            for (@field(r, field.name)) |row| {
-                try writer.writeAll("[");
-                for (row, 0..) |item, i| {
-                    try writer.print("{d}", .{item});
-                    if (i != row.len - 1) try writer.writeAll(", ");
-                }
-                try writer.writeAll("]\n");
+        try writer.writeAll("A:\n");
+        try printMatrix(writer, r.rows, r.columns, r.a);
+        try writer.writeAll("\nB:\n");
+        try printMatrix(writer, r.rows, r.columns, r.b);
+        try writer.writeAll("\nC:\n");
+        try printMatrix(writer, r.rows, r.columns, r.c);
+    }
+
+    fn printMatrix(
+        stream: anytype,
+        row: usize,
+        col: usize,
+        matrix: []const i32,
+    ) !void {
+        for (0..row) |i| {
+            try stream.writeAll("[");
+            for (0..col) |j| {
+                try stream.print("{d}", .{matrix[i * col + j]});
+                if (j != col - 1) try stream.writeAll(", ");
             }
+            try stream.writeAll("]");
+            if (i != row - 1) try stream.writeByte('\n');
         }
     }
 
     fn deinit(r: R1CS, allocator: std.mem.Allocator) void {
-        inline for (@typeInfo(R1CS).Struct.fields) |field| {
-            const value = @field(r, field.name);
-            const T = @TypeOf(value);
-            if (T != []const i32) {
-                for (value) |row| {
-                    allocator.free(row);
-                }
-            }
-            allocator.free(value);
-        }
+        allocator.free(r.a);
+        allocator.free(r.b);
+        allocator.free(r.c);
+        allocator.free(r.r);
     }
 };
 
@@ -236,7 +244,7 @@ pub fn main() !void {
     const y = Variable.makeNew(&counter);
     const tmp1 = Variable.makeNew(&counter);
 
-    var flat: Flat = .{
+    const flat: Flat = .{
         .inputs = &.{x},
         .instructions = &.{
             // y = x ^ 3
@@ -253,6 +261,8 @@ pub fn main() !void {
     defer r1cs.deinit(allocator);
 
     std.debug.print("{}\n", .{r1cs});
+
+    std.debug.print("array: {d}\n", .{r1cs.a});
 }
 
 test "basic vars only" {
@@ -277,19 +287,19 @@ test "basic vars only" {
     const r1cs = try flat.convert(allocator);
     defer r1cs.deinit(allocator);
 
-    try std.testing.expectEqualDeep(r1cs.A, &[_][]const i32{
-        &.{ 0, 1, 0, 0, 0 },
-        &.{ 0, 0, 0, 1, 0 },
-        &.{ 0, 1, 0, 0, 1 },
+    try std.testing.expectEqualDeep(r1cs.a, &[_]i32{
+        0, 1, 0, 0, 0,
+        0, 0, 0, 1, 0,
+        0, 1, 0, 0, 1,
     });
-    try std.testing.expectEqualDeep(r1cs.B, &[_][]const i32{
-        &.{ 0, 1, 0, 0, 0 },
-        &.{ 0, 1, 0, 0, 0 },
-        &.{ 1, 0, 0, 0, 0 },
+    try std.testing.expectEqualDeep(r1cs.b, &[_]i32{
+        0, 1, 0, 0, 0,
+        0, 1, 0, 0, 0,
+        1, 0, 0, 0, 0,
     });
-    try std.testing.expectEqualDeep(r1cs.C, &[_][]const i32{
-        &.{ 0, 0, 0, 1, 0 },
-        &.{ 0, 0, 0, 0, 1 },
-        &.{ 0, 0, 1, 0, 0 },
+    try std.testing.expectEqualDeep(r1cs.c, &[_]i32{
+        0, 0, 0, 1, 0,
+        0, 0, 0, 0, 1,
+        0, 0, 1, 0, 0,
     });
 }
