@@ -45,8 +45,6 @@ const Flat = struct {
         };
         defer variables.deinit();
 
-        std.debug.print("vars: {any}\n", .{variables.keys()});
-
         for (flat.instructions, 0..) |inst, i| {
             var a = try allocator.alloc(i32, variables.count());
             var b = try allocator.alloc(i32, variables.count());
@@ -106,13 +104,19 @@ const Flat = struct {
         for (flat.instructions) |inst| {
             switch (inst.op) {
                 .set => r[variables.getIndex(inst.dest).?] = r[variables.getIndex(inst.lhs).?],
-                .add => r[variables.getIndex(inst.dest).?] = r[variables.getIndex(inst.lhs).?] +
-                    r[variables.getIndex(inst.rhs).?],
-                .mul => r[variables.getIndex(inst.dest).?] = r[variables.getIndex(inst.lhs).?] *
-                    r[variables.getIndex(inst.rhs).?],
+                .add,
+                .mul,
+                => {
+                    const rhs = r[variables.getIndex(inst.rhs).?];
+                    const lhs = r[variables.getIndex(inst.lhs).?];
+                    r[variables.getIndex(inst.dest).?] = switch (inst.op) {
+                        .add => rhs + lhs,
+                        .mul => rhs * lhs,
+                        else => unreachable,
+                    };
+                },
             }
         }
-        std.debug.print("r: {d}\n", .{r});
         return r;
     }
 
@@ -249,4 +253,43 @@ pub fn main() !void {
     defer r1cs.deinit(allocator);
 
     std.debug.print("{}\n", .{r1cs});
+}
+
+test "basic vars only" {
+    const allocator = std.testing.allocator;
+    var counter: u32 = 0;
+
+    const x = Variable.makeNew(&counter);
+    const y = Variable.makeNew(&counter);
+    const tmp1 = Variable.makeNew(&counter);
+
+    const flat: Flat = .{
+        .inputs = &.{x},
+        .instructions = &.{
+            // y = x ^ 3
+            .{ .op = .mul, .dest = tmp1, .lhs = x, .rhs = x },
+            .{ .op = .mul, .dest = y, .lhs = tmp1, .rhs = x },
+            // out = y + x
+            .{ .op = .add, .dest = .out, .lhs = y, .rhs = x },
+        },
+    };
+
+    const r1cs = try flat.convert(allocator);
+    defer r1cs.deinit(allocator);
+
+    try std.testing.expectEqualDeep(r1cs.A, &[_][]const i32{
+        &.{ 0, 1, 0, 0, 0 },
+        &.{ 0, 0, 0, 1, 0 },
+        &.{ 0, 1, 0, 0, 1 },
+    });
+    try std.testing.expectEqualDeep(r1cs.B, &[_][]const i32{
+        &.{ 0, 1, 0, 0, 0 },
+        &.{ 0, 1, 0, 0, 0 },
+        &.{ 1, 0, 0, 0, 0 },
+    });
+    try std.testing.expectEqualDeep(r1cs.C, &[_][]const i32{
+        &.{ 0, 0, 0, 1, 0 },
+        &.{ 0, 0, 0, 0, 1 },
+        &.{ 0, 0, 1, 0, 0 },
+    });
 }
