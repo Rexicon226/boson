@@ -2,6 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 
+const EPSILON = 1e-9;
+
 const Flat = struct {
     inputs: []const Variable,
     instructions: []const Instruction,
@@ -19,7 +21,7 @@ const Flat = struct {
         };
     };
 
-    fn convert(flat: *const Flat, allocator: std.mem.Allocator) !R1CS {
+    fn convert(flat: *const Flat, allocator: std.mem.Allocator) !struct { R1CS, []const i32 } {
         var used: std.AutoHashMapUnmanaged(Variable, void) = .{};
         defer used.deinit(allocator);
         for (flat.inputs) |input| {
@@ -80,14 +82,14 @@ const Flat = struct {
             }
         }
 
-        return .{
+        const r1cs: R1CS = .{
             .rows = flat.instructions.len,
             .columns = num_variables,
             .a = A,
             .b = B,
             .c = C,
-            .r = try flat.computeInput(variables, allocator),
         };
+        return .{ r1cs, try flat.computeInput(variables, allocator) };
     }
 
     fn setVar(
@@ -225,7 +227,7 @@ fn printMatrix(
     stream: anytype,
     rows: usize,
     cols: usize,
-    /// can be either []const f32 or []const i32
+    /// can be either []const f64 or []const i32
     matrix: anytype,
 ) !void {
     for (0..rows) |i| {
@@ -243,15 +245,14 @@ const R1CS = struct {
     a: []const i32,
     b: []const i32,
     c: []const i32,
-    r: []const i32,
     rows: usize,
     columns: usize,
 
     fn interpolate(
         allocator: std.mem.Allocator,
         points: []const i32,
-    ) ![]const f32 {
-        var o: []const f32 = &.{};
+    ) ![]const f64 {
+        var o: []const f64 = &.{};
         for (points, 0..) |point, i| {
             const result = try singleton(
                 allocator,
@@ -269,12 +270,12 @@ const R1CS = struct {
         point: i32,
         height: i32,
         total_points: u32,
-    ) ![]const f32 {
+    ) ![]const f64 {
         var fac: i32 = 1;
         for (1..total_points + 1) |i| {
             if (i != point) fac *= point - @as(i32, @intCast(i));
         }
-        var result: []const f32 = &.{@as(f32, @floatFromInt(height)) * (1.0 / @as(f32, @floatFromInt(fac)))};
+        var result: []const f64 = &.{@as(f64, @floatFromInt(height)) * (1.0 / @as(f64, @floatFromInt(fac)))};
         var c: u32 = 1;
         for (1..total_points + 1) |i| {
             if (i != point) {
@@ -287,10 +288,10 @@ const R1CS = struct {
 
     fn add(
         allocator: std.mem.Allocator,
-        a: []const f32,
-        b: []const f32,
-    ) ![]const f32 {
-        var o = try allocator.alloc(f32, @max(a.len, b.len));
+        a: []const f64,
+        b: []const f64,
+    ) ![]const f64 {
+        var o = try allocator.alloc(f64, @max(a.len, b.len));
         @memset(o, 0.0);
         for (a, 0..) |x, i| {
             o[i] += x;
@@ -301,12 +302,28 @@ const R1CS = struct {
         return o;
     }
 
+    fn sub(
+        allocator: std.mem.Allocator,
+        a: []const f64,
+        b: []const f64,
+    ) ![]const f64 {
+        var o = try allocator.alloc(f64, @max(a.len, b.len));
+        @memset(o, 0.0);
+        for (a, 0..) |x, i| {
+            o[i] += x;
+        }
+        for (b, 0..) |x, i| {
+            o[i] += -x;
+        }
+        return o;
+    }
+
     fn mul(
         allocator: std.mem.Allocator,
-        a: []const f32,
-        b: []const f32,
-    ) ![]const f32 {
-        const o = try allocator.alloc(f32, a.len + b.len - 1);
+        a: []const f64,
+        b: []const f64,
+    ) ![]const f64 {
+        const o = try allocator.alloc(f64, a.len + b.len - 1);
         @memset(o, 0.0);
         for (a, 0..) |x, i| {
             for (b, 0..) |y, j| {
@@ -344,10 +361,17 @@ const R1CS = struct {
         const iB = try interpolateMatrix(allocator, B, rows, cols);
         const iC = try interpolateMatrix(allocator, C, rows, cols);
 
+        var Z: []const f64 = &.{1};
+        for (1..cols + 1) |i| Z = try mul(allocator, Z, &.{
+            @floatFromInt(-@as(i32, @intCast(i))),
+            1,
+        });
+
         return .{
             .a = iA,
             .b = iB,
             .c = iC,
+            .z = Z,
             .rows = rows,
             .columns = cols,
         };
@@ -358,8 +382,8 @@ const R1CS = struct {
         matrix: []const i32,
         rows: usize,
         cols: usize,
-    ) ![]const f32 {
-        const result = try allocator.alloc(f32, matrix.len);
+    ) ![]const f64 {
+        const result = try allocator.alloc(f64, matrix.len);
         for (0..rows) |i| {
             const slice = matrix[i * cols ..][0..cols];
             const interpolated = try interpolate(allocator, slice);
@@ -374,7 +398,6 @@ const R1CS = struct {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        try writer.print("r: {d}\n", .{r.r});
         try writer.writeAll("A:\n");
         try printMatrix(writer, r.rows, r.columns, r.a);
         try writer.writeAll("\nB:\n");
@@ -388,16 +411,71 @@ const R1CS = struct {
         allocator.free(r.a);
         allocator.free(r.b);
         allocator.free(r.c);
-        allocator.free(r.r);
     }
 };
 
 const Qap = struct {
     rows: usize,
     columns: usize,
-    a: []const f32,
-    b: []const f32,
-    c: []const f32,
+
+    a: []const f64,
+    b: []const f64,
+    c: []const f64,
+    /// `Z = Π{i = N}(x - i)`
+    z: []const f64,
+
+    fn check(q: Qap, allocator: std.mem.Allocator, r: []const i32) !void {
+        // As = A . s
+        var As: []const f64 = &.{};
+        for (0..q.rows, r) |i, s| {
+            const slice = q.a[i * q.columns ..][0..q.columns];
+            As = try R1CS.add(allocator, As, try R1CS.mul(allocator, &.{@floatFromInt(s)}, slice));
+        }
+
+        // Bs = B . s
+        var Bs: []const f64 = &.{};
+        for (0..q.rows, r) |i, s| {
+            const slice = q.b[i * q.columns ..][0..q.columns];
+            Bs = try R1CS.add(allocator, Bs, try R1CS.mul(allocator, &.{@floatFromInt(s)}, slice));
+        }
+
+        // Cs = C . s
+        var Cs: []const f64 = &.{};
+        for (0..q.rows, r) |i, s| {
+            const slice = q.c[i * q.columns ..][0..q.columns];
+            Cs = try R1CS.add(allocator, Cs, try R1CS.mul(allocator, &.{@floatFromInt(s)}, slice));
+        }
+
+        // t = As * Bs - Cs
+        const o = try R1CS.sub(allocator, try R1CS.mul(allocator, As, Bs), Cs);
+        const Z = q.z;
+
+        // if (sum(@rem(t, Z)) != 0) invalid
+        var n_deg = degree(o).?;
+        const d_deg = degree(Z).?;
+
+        var remainder = try allocator.dupe(f64, o);
+        while (n_deg >= d_deg) {
+            const coeff = remainder[n_deg] / Z[d_deg];
+            for (0..d_deg + 1) |i| {
+                remainder[n_deg - d_deg + i] -= coeff * Z[i];
+            }
+            n_deg = degree(remainder) orelse break;
+        }
+
+        // check if there are any non-zero elements in the remainder
+        if (degree(remainder) != null) return error.HasRemainder;
+    }
+
+    fn degree(poly: []const f64) ?usize {
+        var i = poly.len;
+        while (i > 0) : (i -= 1) {
+            if (@abs(poly[i - 1]) > EPSILON) {
+                return i - 1;
+            }
+        }
+        return null; // there is no degree, all zeros.
+    }
 
     pub fn format(
         q: Qap,
@@ -411,13 +489,14 @@ const Qap = struct {
         try printMatrix(writer, q.rows, q.columns, q.b);
         try writer.writeAll("\nC(poly):\n");
         try printMatrix(writer, q.rows, q.columns, q.c);
-        try writer.writeByte('\n');
+        try writer.print("\nZ:\n{d}\n", .{q.z});
     }
 
     fn deinit(q: Qap, allocator: std.mem.Allocator) void {
         allocator.free(q.a);
         allocator.free(q.b);
         allocator.free(q.c);
+        allocator.free(q.z);
     }
 };
 
@@ -447,13 +526,14 @@ pub fn main() !void {
             .{ .op = .mul, .dest = y, .lhs = tmp1, .rhs = x },
             // tmp2 = y + x
             .{ .op = .add, .dest = tmp2, .lhs = y, .rhs = x },
+            // out = tmp2 + 5
             .{ .op = .add, .dest = .out, .lhs = tmp2, .rhs = five },
         },
     };
 
     std.debug.print("{}\n", .{flat});
 
-    const r1cs = try flat.convert(allocator);
+    const r1cs, const r = try flat.convert(allocator);
     defer r1cs.deinit(allocator);
 
     std.debug.print("{}\n", .{r1cs});
@@ -462,6 +542,13 @@ pub fn main() !void {
     defer qap.deinit(allocator);
 
     std.debug.print("{}\n", .{qap});
+
+    const result = qap.check(allocator, r);
+    if (std.meta.isError(result)) {
+        std.debug.print("invalid\n", .{});
+    } else {
+        std.debug.print("valid\n", .{});
+    }
 }
 
 test "basic qap" {
@@ -485,8 +572,14 @@ test "basic qap" {
         },
     };
 
-    const r1cs = try flat.convert(allocator);
+    const r1cs, const r = try flat.convert(allocator);
     defer r1cs.deinit(allocator);
+
+    try std.testing.expectEqualSlices(
+        i32,
+        &.{ 1, 3, 30, 9, 27 },
+        r,
+    );
 
     try std.testing.expectEqualSlices(i32, &.{
         0, 1, 0, 0, 0,
@@ -509,7 +602,7 @@ test "basic qap" {
     const qap = try r1cs.toQAP(allocator);
     defer qap.deinit(allocator);
 
-    try std.testing.expectEqualSlices(f32, &.{
+    try std.testing.expectEqualSlices(f64, &.{
         0.0,  0.0,  0.0,
         4.0,  -4.0, 1.0,
         0.0,  0.0,  0.0,
@@ -517,7 +610,7 @@ test "basic qap" {
         1.0,  -1.5, 0.5,
     }, qap.a);
 
-    try std.testing.expectEqualSlices(f32, &.{
+    try std.testing.expectEqualSlices(f64, &.{
         1.0, -1.5, 0.5,
         0.0, 1.5,  -0.5,
         0.0, 0.0,  0.0,
@@ -525,7 +618,7 @@ test "basic qap" {
         0.0, 0.0,  0.0,
     }, qap.b);
 
-    try std.testing.expectEqualSlices(f32, &.{
+    try std.testing.expectEqualSlices(f64, &.{
         0.0,  0.0,  0.0,
         0.0,  0.0,  0.0,
         1.0,  -1.5, 0.5,
@@ -540,5 +633,5 @@ test "lagrange interpolate" {
     defer arena.deinit();
 
     const result = try R1CS.interpolate(arena.allocator(), &.{ 1, 0, 1 });
-    try std.testing.expectEqualSlices(f32, &.{ 4, -4, 1 }, result);
+    try std.testing.expectEqualSlices(f64, &.{ 4, -4, 1 }, result);
 }
