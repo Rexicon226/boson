@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const assert = std.debug.assert;
 
 const Flat = struct {
     inputs: []const Variable,
@@ -67,14 +68,14 @@ const Flat = struct {
                 },
                 .add => {
                     c[variables.getIndex(inst.dest).?] = 1;
-                    a[variables.getIndex(inst.lhs).?] += 1;
-                    a[variables.getIndex(inst.rhs).?] += 1;
+                    setVar(a, inst.lhs, variables);
+                    setVar(a, inst.rhs, variables);
                     b[0] = 1;
                 },
                 .mul => {
                     c[variables.getIndex(inst.dest).?] = 1;
-                    a[variables.getIndex(inst.lhs).?] += 1;
-                    b[variables.getIndex(inst.rhs).?] += 1;
+                    setVar(a, inst.lhs, variables);
+                    setVar(b, inst.rhs, variables);
                 },
             }
         }
@@ -85,13 +86,37 @@ const Flat = struct {
             .a = A,
             .b = B,
             .c = C,
-            .r = try flat.computeInput(&variables, allocator),
+            .r = try flat.computeInput(variables, allocator),
         };
+    }
+
+    fn setVar(
+        array: []i32,
+        variable: Variable,
+        vars: std.AutoArrayHashMap(Variable, void),
+    ) void {
+        if (variable.isConstant()) {
+            array[0] += @bitCast(variable.getConstant());
+        } else {
+            array[vars.getIndex(variable).?] += 1;
+        }
+    }
+
+    fn getVar(
+        variable: Variable,
+        r: []const i32,
+        vars: std.AutoArrayHashMap(Variable, void),
+    ) i32 {
+        if (variable.isConstant()) {
+            return variable.getConstant();
+        } else {
+            return r[vars.getIndex(variable).?];
+        }
     }
 
     fn computeInput(
         flat: *const Flat,
-        variables: *const std.AutoArrayHashMap(Variable, void),
+        variables: std.AutoArrayHashMap(Variable, void),
         allocator: std.mem.Allocator,
     ) ![]const i32 {
         var r = try allocator.alloc(i32, variables.count());
@@ -102,12 +127,12 @@ const Flat = struct {
         }
         for (flat.instructions) |inst| {
             switch (inst.op) {
-                .set => r[variables.getIndex(inst.dest).?] = r[variables.getIndex(inst.lhs).?],
+                .set => r[variables.getIndex(inst.dest).?] = getVar(inst.lhs, r, variables),
                 .add,
                 .mul,
                 => {
-                    const rhs = r[variables.getIndex(inst.rhs).?];
-                    const lhs = r[variables.getIndex(inst.lhs).?];
+                    const rhs = getVar(inst.rhs, r, variables);
+                    const lhs = getVar(inst.lhs, r, variables);
                     r[variables.getIndex(inst.dest).?] = switch (inst.op) {
                         .add => rhs + lhs,
                         .mul => rhs * lhs,
@@ -156,15 +181,31 @@ const Flat = struct {
     }
 };
 
-const Variable = enum(u32) {
+const Variable = enum(u64) {
     none,
     one,
     out,
+
     _,
 
     fn makeNew(counter: *u32) Variable {
         defer counter.* += 1;
         return @enumFromInt(counter.* + @typeInfo(Variable).Enum.fields.len);
+    }
+
+    fn newConstant(constant: i32) Variable {
+        const unsigned = @as(u32, @bitCast(constant));
+        return @enumFromInt(@as(u64, unsigned) << 32);
+    }
+
+    fn isConstant(variable: Variable) bool {
+        return @intFromEnum(variable) >> 32 != 0;
+    }
+
+    fn getConstant(variable: Variable) i32 {
+        assert(variable.isConstant());
+        const unsigned: u32 = @truncate(@intFromEnum(variable) >> 32);
+        return @bitCast(unsigned);
     }
 
     pub fn format(
@@ -395,6 +436,8 @@ pub fn main() !void {
     const x = Variable.makeNew(&counter);
     const y = Variable.makeNew(&counter);
     const tmp1 = Variable.makeNew(&counter);
+    const tmp2 = Variable.makeNew(&counter);
+    const five = Variable.newConstant(5);
 
     const flat: Flat = .{
         .inputs = &.{x},
@@ -402,8 +445,9 @@ pub fn main() !void {
             // y = x ^ 3
             .{ .op = .mul, .dest = tmp1, .lhs = x, .rhs = x },
             .{ .op = .mul, .dest = y, .lhs = tmp1, .rhs = x },
-            // out = y + x
-            .{ .op = .add, .dest = .out, .lhs = y, .rhs = x },
+            // tmp2 = y + x
+            .{ .op = .add, .dest = tmp2, .lhs = y, .rhs = x },
+            .{ .op = .add, .dest = .out, .lhs = tmp2, .rhs = five },
         },
     };
 
