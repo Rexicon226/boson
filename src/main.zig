@@ -180,16 +180,152 @@ const Variable = enum(u32) {
     }
 };
 
-const R1CS = struct {
-    /// The number of rows in each matrix.
+fn printMatrix(
+    stream: anytype,
     rows: usize,
-    /// The number of columns in each matrix.
-    columns: usize,
+    cols: usize,
+    /// can be either []const f32 or []const i32
+    matrix: anytype,
+) !void {
+    for (0..rows) |i| {
+        try stream.writeAll("[");
+        for (0..cols) |j| {
+            try stream.print("{d}", .{matrix[i * cols + j]});
+            if (j != cols - 1) try stream.writeAll(", ");
+        }
+        try stream.writeAll("]");
+        if (i != rows - 1) try stream.writeByte('\n');
+    }
+}
 
+const R1CS = struct {
     a: []const i32,
     b: []const i32,
     c: []const i32,
     r: []const i32,
+    rows: usize,
+    columns: usize,
+
+    fn interpolate(
+        allocator: std.mem.Allocator,
+        points: []const i32,
+    ) ![]const f32 {
+        var o: []const f32 = &.{};
+        for (points, 0..) |point, i| {
+            const result = try singleton(
+                allocator,
+                @intCast(i + 1),
+                point,
+                @intCast(points.len),
+            );
+            o = try add(allocator, o, result);
+        }
+        return o;
+    }
+
+    fn singleton(
+        allocator: std.mem.Allocator,
+        point: i32,
+        height: i32,
+        total_points: u32,
+    ) ![]const f32 {
+        var fac: i32 = 1;
+        for (1..total_points + 1) |i| {
+            if (i != point) fac *= point - @as(i32, @intCast(i));
+        }
+        var result: []const f32 = &.{@as(f32, @floatFromInt(height)) * (1.0 / @as(f32, @floatFromInt(fac)))};
+        var c: u32 = 1;
+        for (1..total_points + 1) |i| {
+            if (i != point) {
+                result = try mul(allocator, result, &.{ @floatFromInt(-@as(i32, @intCast(i))), 1 });
+                c += 1;
+            }
+        }
+        return result;
+    }
+
+    fn add(
+        allocator: std.mem.Allocator,
+        a: []const f32,
+        b: []const f32,
+    ) ![]const f32 {
+        var o = try allocator.alloc(f32, @max(a.len, b.len));
+        @memset(o, 0.0);
+        for (a, 0..) |x, i| {
+            o[i] += x;
+        }
+        for (b, 0..) |x, i| {
+            o[i] += x;
+        }
+        return o;
+    }
+
+    fn mul(
+        allocator: std.mem.Allocator,
+        a: []const f32,
+        b: []const f32,
+    ) ![]const f32 {
+        const o = try allocator.alloc(f32, a.len + b.len - 1);
+        @memset(o, 0.0);
+        for (a, 0..) |x, i| {
+            for (b, 0..) |y, j| {
+                o[i + j] += x * y;
+            }
+        }
+        return o;
+    }
+
+    fn transpose(
+        allocator: std.mem.Allocator,
+        src: []const i32,
+        rows: usize,
+        cols: usize,
+    ) ![]const i32 {
+        const result = try allocator.alloc(i32, rows * cols);
+        for (0..rows) |i| {
+            for (0..cols) |j| {
+                result[j * rows + i] = src[i * cols + j];
+            }
+        }
+        return result;
+    }
+
+    fn toQAP(r: R1CS, allocator: std.mem.Allocator) !Qap {
+        // swapped since we're transposing the matrices
+        const cols = r.rows;
+        const rows = r.columns;
+
+        const A = try transpose(allocator, r.a, cols, rows);
+        const B = try transpose(allocator, r.b, cols, rows);
+        const C = try transpose(allocator, r.c, cols, rows);
+
+        const iA = try interpolateMatrix(allocator, A, rows, cols);
+        const iB = try interpolateMatrix(allocator, B, rows, cols);
+        const iC = try interpolateMatrix(allocator, C, rows, cols);
+
+        return .{
+            .a = iA,
+            .b = iB,
+            .c = iC,
+            .rows = rows,
+            .columns = cols,
+        };
+    }
+
+    fn interpolateMatrix(
+        allocator: std.mem.Allocator,
+        matrix: []const i32,
+        rows: usize,
+        cols: usize,
+    ) ![]const f32 {
+        const result = try allocator.alloc(f32, matrix.len);
+        for (0..rows) |i| {
+            const slice = matrix[i * cols ..][0..cols];
+            const interpolated = try interpolate(allocator, slice);
+            @memcpy(result[i * cols ..][0..cols], interpolated);
+        }
+        return result;
+    }
 
     pub fn format(
         r: R1CS,
@@ -197,29 +333,14 @@ const R1CS = struct {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        try writer.print("r: {d}\n", .{r.r});
         try writer.writeAll("A:\n");
         try printMatrix(writer, r.rows, r.columns, r.a);
         try writer.writeAll("\nB:\n");
         try printMatrix(writer, r.rows, r.columns, r.b);
         try writer.writeAll("\nC:\n");
         try printMatrix(writer, r.rows, r.columns, r.c);
-    }
-
-    fn printMatrix(
-        stream: anytype,
-        row: usize,
-        col: usize,
-        matrix: []const i32,
-    ) !void {
-        for (0..row) |i| {
-            try stream.writeAll("[");
-            for (0..col) |j| {
-                try stream.print("{d}", .{matrix[i * col + j]});
-                if (j != col - 1) try stream.writeAll(", ");
-            }
-            try stream.writeAll("]");
-            if (i != row - 1) try stream.writeByte('\n');
-        }
+        try writer.writeByte('\n');
     }
 
     fn deinit(r: R1CS, allocator: std.mem.Allocator) void {
@@ -230,16 +351,47 @@ const R1CS = struct {
     }
 };
 
+const Qap = struct {
+    rows: usize,
+    columns: usize,
+    a: []const f32,
+    b: []const f32,
+    c: []const f32,
+
+    pub fn format(
+        q: Qap,
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        try writer.writeAll("A(poly):\n");
+        try printMatrix(writer, q.rows, q.columns, q.a);
+        try writer.writeAll("\nB(poly):\n");
+        try printMatrix(writer, q.rows, q.columns, q.b);
+        try writer.writeAll("\nC(poly):\n");
+        try printMatrix(writer, q.rows, q.columns, q.c);
+        try writer.writeByte('\n');
+    }
+
+    fn deinit(q: Qap, allocator: std.mem.Allocator) void {
+        allocator.free(q.a);
+        allocator.free(q.b);
+        allocator.free(q.c);
+    }
+};
+
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
-    const allocator = switch (builtin.mode) {
+    const gpa_allocator = switch (builtin.mode) {
         .Debug => gpa.allocator(),
         else => std.heap.c_allocator,
     };
+    var arena = std.heap.ArenaAllocator.init(gpa_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     var counter: u32 = 0;
-
     const x = Variable.makeNew(&counter);
     const y = Variable.makeNew(&counter);
     const tmp1 = Variable.makeNew(&counter);
@@ -262,13 +414,18 @@ pub fn main() !void {
 
     std.debug.print("{}\n", .{r1cs});
 
-    std.debug.print("array: {d}\n", .{r1cs.a});
+    const qap = try r1cs.toQAP(allocator);
+    defer qap.deinit(allocator);
+
+    std.debug.print("{}\n", .{qap});
 }
 
-test "basic vars only" {
-    const allocator = std.testing.allocator;
-    var counter: u32 = 0;
+test "basic qap" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
+    var counter: u32 = 0;
     const x = Variable.makeNew(&counter);
     const y = Variable.makeNew(&counter);
     const tmp1 = Variable.makeNew(&counter);
@@ -287,19 +444,57 @@ test "basic vars only" {
     const r1cs = try flat.convert(allocator);
     defer r1cs.deinit(allocator);
 
-    try std.testing.expectEqualDeep(r1cs.a, &[_]i32{
+    try std.testing.expectEqualSlices(i32, &.{
         0, 1, 0, 0, 0,
         0, 0, 0, 1, 0,
         0, 1, 0, 0, 1,
-    });
-    try std.testing.expectEqualDeep(r1cs.b, &[_]i32{
+    }, r1cs.a);
+
+    try std.testing.expectEqualSlices(i32, &.{
         0, 1, 0, 0, 0,
         0, 1, 0, 0, 0,
         1, 0, 0, 0, 0,
-    });
-    try std.testing.expectEqualDeep(r1cs.c, &[_]i32{
+    }, r1cs.b);
+
+    try std.testing.expectEqualSlices(i32, &.{
         0, 0, 0, 1, 0,
         0, 0, 0, 0, 1,
         0, 0, 1, 0, 0,
-    });
+    }, r1cs.c);
+
+    const qap = try r1cs.toQAP(allocator);
+    defer qap.deinit(allocator);
+
+    try std.testing.expectEqualSlices(f32, &.{
+        0.0,  0.0,  0.0,
+        4.0,  -4.0, 1.0,
+        0.0,  0.0,  0.0,
+        -3.0, 4.0,  -1.0,
+        1.0,  -1.5, 0.5,
+    }, qap.a);
+
+    try std.testing.expectEqualSlices(f32, &.{
+        1.0, -1.5, 0.5,
+        0.0, 1.5,  -0.5,
+        0.0, 0.0,  0.0,
+        0.0, 0.0,  0.0,
+        0.0, 0.0,  0.0,
+    }, qap.b);
+
+    try std.testing.expectEqualSlices(f32, &.{
+        0.0,  0.0,  0.0,
+        0.0,  0.0,  0.0,
+        1.0,  -1.5, 0.5,
+        3.0,  -2.5, 0.5,
+        -3.0, 4.0,  -1.0,
+    }, qap.c);
+}
+
+test "lagrange interpolate" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const result = try R1CS.interpolate(arena.allocator(), &.{ 1, 0, 1 });
+    try std.testing.expectEqualSlices(f32, &.{ 4, -4, 1 }, result);
 }
