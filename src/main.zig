@@ -625,6 +625,8 @@ test "basic qap" {
         3.0,  -2.5, 0.5,
         -3.0, 4.0,  -1.0,
     }, qap.c);
+
+    try qap.check(allocator, r);
 }
 
 test "lagrange interpolate" {
