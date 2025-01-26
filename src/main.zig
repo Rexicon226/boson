@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const fe = @import("fe.zig");
 const assert = std.debug.assert;
 
 const EPSILON = 1e-9;
@@ -89,7 +90,7 @@ const Flat = struct {
             .b = B,
             .c = C,
         };
-        return .{ r1cs, try flat.computeInput(variables, allocator) };
+        return .{ r1cs, try flat.solve(variables, allocator) };
     }
 
     fn setVar(
@@ -116,7 +117,7 @@ const Flat = struct {
         }
     }
 
-    fn computeInput(
+    fn solve(
         flat: *const Flat,
         variables: std.AutoArrayHashMap(Variable, void),
         allocator: std.mem.Allocator,
@@ -216,6 +217,11 @@ const Variable = enum(u64) {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        if (variable.isConstant()) {
+            const constant = variable.getConstant();
+            try writer.print("{d}", .{constant});
+            return;
+        }
         switch (variable) {
             .none, .one, .out => |t| try writer.print("{s}", .{@tagName(t)}),
             else => try writer.print("%{d}", .{@intFromEnum(variable)}),
@@ -223,7 +229,7 @@ const Variable = enum(u64) {
     }
 };
 
-fn printMatrix(
+fn dumpMatrix(
     stream: anytype,
     rows: usize,
     cols: usize,
@@ -399,11 +405,11 @@ const R1CS = struct {
         writer: anytype,
     ) !void {
         try writer.writeAll("A:\n");
-        try printMatrix(writer, r.rows, r.columns, r.a);
+        try dumpMatrix(writer, r.rows, r.columns, r.a);
         try writer.writeAll("\nB:\n");
-        try printMatrix(writer, r.rows, r.columns, r.b);
+        try dumpMatrix(writer, r.rows, r.columns, r.b);
         try writer.writeAll("\nC:\n");
-        try printMatrix(writer, r.rows, r.columns, r.c);
+        try dumpMatrix(writer, r.rows, r.columns, r.c);
         try writer.writeByte('\n');
     }
 
@@ -484,11 +490,11 @@ const Qap = struct {
         writer: anytype,
     ) !void {
         try writer.writeAll("A(poly):\n");
-        try printMatrix(writer, q.rows, q.columns, q.a);
+        try dumpMatrix(writer, q.rows, q.columns, q.a);
         try writer.writeAll("\nB(poly):\n");
-        try printMatrix(writer, q.rows, q.columns, q.b);
+        try dumpMatrix(writer, q.rows, q.columns, q.b);
         try writer.writeAll("\nC(poly):\n");
-        try printMatrix(writer, q.rows, q.columns, q.c);
+        try dumpMatrix(writer, q.rows, q.columns, q.c);
         try writer.print("\nZ:\n{d}\n", .{q.z});
     }
 
@@ -499,6 +505,96 @@ const Qap = struct {
         allocator.free(q.z);
     }
 };
+
+fn Finite(Field: type) type {
+    return struct {
+        fn interpolate(
+            allocator: std.mem.Allocator,
+            points: []const u32,
+        ) ![]const Field {
+            const N = points.len;
+
+            const F: []const Field = dd: {
+                const F = try allocator.alloc(Field, sum(N));
+                @memset(F, Field.zero);
+                for (points, 0..) |point, i| {
+                    F[sum(i)] = try Field.fromInt(@intCast(point));
+                }
+
+                for (1..N) |i| {
+                    for (0..i) |j| {
+                        const slice = F[sum(i)..][0 .. i + 1];
+                        const numerator = slice[j].sub(F[sum(i - 1)..][j]);
+                        const denominator = try Field.fromInt(@intCast((i + 1) - (i - j)));
+                        const result = numerator.mul(denominator.invert());
+                        slice[j + 1] = result;
+                    }
+                }
+
+                const result = try allocator.alloc(Field, N);
+                for (0..N) |i| {
+                    result[i] = F[sum(i) + i];
+                }
+                break :dd result;
+            };
+
+            var P: []const Field = &.{F[N - 1]};
+            for (1..N) |i| {
+                const single = &.{
+                    try Field.coerce(-@as(i17, @intCast(N - i))),
+                    try Field.fromInt(1),
+                };
+                const multiplied = try mul(allocator, P, single);
+                P = try add(allocator, multiplied, &.{F[N - i - 1]});
+            }
+            return P;
+        }
+
+        inline fn sum(k: usize) usize {
+            return (k * (k + 1)) / 2;
+        }
+
+        fn add(
+            allocator: std.mem.Allocator,
+            a: []const Field,
+            b: []const Field,
+        ) ![]const Field {
+            var o = try allocator.alloc(Field, @max(a.len, b.len));
+            @memset(o, Field.zero);
+            for (a, 0..) |x, i| {
+                o[i] = o[i].add(x);
+            }
+            for (b, 0..) |x, i| {
+                o[i] = o[i].add(x);
+            }
+            return o;
+        }
+
+        fn mul(
+            allocator: std.mem.Allocator,
+            a: []const Field,
+            b: []const Field,
+        ) ![]const Field {
+            const o = try allocator.alloc(Field, a.len + b.len - 1);
+            @memset(o, Field.zero);
+            for (a, 0..) |x, i| {
+                for (b, 0..) |y, j| {
+                    o[i + j] = o[i + j].add(x.mul(y));
+                }
+            }
+            return o;
+        }
+
+        fn dumpPoly(poly: []const Field) void {
+            for (0..poly.len) |i| {
+                const d = poly.len - i - 1;
+                std.debug.print("{}*x^{}", .{ poly[d], d });
+                if (i != poly.len - 1) std.debug.print(" + ", .{});
+            }
+            std.debug.print("\n", .{});
+        }
+    };
+}
 
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
@@ -511,44 +607,50 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var counter: u32 = 0;
-    const x = Variable.makeNew(&counter);
-    const y = Variable.makeNew(&counter);
-    const tmp1 = Variable.makeNew(&counter);
-    const tmp2 = Variable.makeNew(&counter);
-    const five = Variable.newConstant(5);
+    const Field = Finite(fe.F641);
 
-    const flat: Flat = .{
-        .inputs = &.{x},
-        .instructions = &.{
-            // y = x ^ 3
-            .{ .op = .mul, .dest = tmp1, .lhs = x, .rhs = x },
-            .{ .op = .mul, .dest = y, .lhs = tmp1, .rhs = x },
-            // tmp2 = y + x
-            .{ .op = .add, .dest = tmp2, .lhs = y, .rhs = x },
-            // out = tmp2 + 5
-            .{ .op = .add, .dest = .out, .lhs = tmp2, .rhs = five },
-        },
-    };
+    const result = try Field.interpolate(allocator, &.{ 1, 0, 1, 0 });
+    Field.dumpPoly(result);
 
-    std.debug.print("{}\n", .{flat});
+    // var counter: u32 = 0;
+    // const x = Variable.makeNew(&counter);
+    // const y = Variable.makeNew(&counter);
+    // const tmp1 = Variable.makeNew(&counter);
+    // const tmp2 = Variable.makeNew(&counter);
+    // const five = Variable.newConstant(5);
 
-    const r1cs, const r = try flat.convert(allocator);
-    defer r1cs.deinit(allocator);
+    // const flat: Flat = .{
+    //     .inputs = &.{x},
+    //     .instructions = &.{
+    //         // y = x
+    //         .{ .op = .mul, .dest = tmp1, .lhs = x, .rhs = x },
+    //         .{ .op = .mul, .dest = y, .lhs = tmp1, .rhs = x },
+    //         // tmp2 = y + x
+    //         .{ .op = .add, .dest = tmp2, .lhs = y, .rhs = x },
+    //         // out = tmp2 + 5
+    //         .{ .op = .add, .dest = .out, .lhs = tmp2, .rhs = five },
+    //     },
+    // };
 
-    std.debug.print("{}\n", .{r1cs});
+    // std.debug.print("{}\n", .{flat});
 
-    const qap = try r1cs.toQAP(allocator);
-    defer qap.deinit(allocator);
+    // const r1cs, const r = try flat.convert(allocator);
+    // defer r1cs.deinit(allocator);
 
-    std.debug.print("{}\n", .{qap});
+    // std.debug.print("{}\n", .{r1cs});
+    // std.debug.print("r: {d}\n\n", .{r});
 
-    const result = qap.check(allocator, r);
-    if (std.meta.isError(result)) {
-        std.debug.print("invalid\n", .{});
-    } else {
-        std.debug.print("valid\n", .{});
-    }
+    // const qap = try r1cs.toQAP(allocator);
+    // defer qap.deinit(allocator);
+
+    // std.debug.print("{}\n", .{qap});
+
+    // const result = qap.check(allocator, r);
+    // if (std.meta.isError(result)) {
+    //     std.debug.print("invalid\n", .{});
+    // } else {
+    //     std.debug.print("valid\n", .{});
+    // }
 }
 
 test "basic qap" {
@@ -629,11 +731,25 @@ test "basic qap" {
     try qap.check(allocator, r);
 }
 
-test "lagrange interpolate" {
+test "lagrange interpolate over floats" {
     const allocator = std.testing.allocator;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
     const result = try R1CS.interpolate(arena.allocator(), &.{ 1, 0, 1 });
     try std.testing.expectEqualSlices(f64, &.{ 4, -4, 1 }, result);
+}
+
+test "langrage interpolate over finite field" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const Field = Finite(fe.F641);
+    const result = try Field.interpolate(arena.allocator(), &.{ 1, 0, 1, 0 });
+    try std.testing.expect(result.len == 4);
+    try std.testing.expectEqual(8, result[0].toInt());
+    try std.testing.expectEqual(416, result[1].toInt());
+    try std.testing.expectEqual(5, result[2].toInt());
+    try std.testing.expectEqual(213, result[3].toInt());
 }
