@@ -13,7 +13,6 @@ pub const FieldParams = struct {
     field_order: comptime_int,
     field_bits: comptime_int,
     encoded_length: comptime_int,
-    d: comptime_int,
 };
 
 /// A field element, internally stored in Montgomery domain.
@@ -87,7 +86,10 @@ pub fn Field(comptime params: FieldParams) type {
         }
 
         /// Element as an integer.
-        pub const IntRepr = meta.Int(.unsigned, params.field_bits);
+        pub const IntRepr = meta.Int(
+            .unsigned,
+            std.math.ceilPowerOfTwo(u64, params.field_bits) catch unreachable,
+        );
         pub const SignedRepr = meta.Int(.signed, params.field_bits + 1);
 
         /// Create a field element from an integer.
@@ -206,10 +208,10 @@ pub fn Field(comptime params: FieldParams) type {
         /// Return the inverse of a field element, or 0 if a=0.
         // Field inversion from https://eprint.iacr.org/2021/549.pdf
         pub fn invert(a: Fe) Fe {
-            const iterations = if (params.d < 46)
-                (49 * params.d + 80) / 17
+            const iterations = if (field_bits < 46)
+                (49 * field_bits + 80) / 17
             else
-                (49 * params.d + 57) / 17;
+                (49 * field_bits + 57) / 17;
             const Limbs = @TypeOf(a.limbs);
             const Word = @TypeOf(a.limbs[0]);
             const XLimbs = [a.limbs.len + 1]Word;
@@ -272,14 +274,12 @@ pub const Vesta = Field(.{
     .fiat = @import("vesta.zig"),
     .field_order = 0x40000000000000000000000000000000224698fc0994a8dd8c46eb2100000001,
     .encoded_length = 32,
-    .field_bits = 256,
-    .d = 255,
+    .field_bits = 255,
 });
 
 pub const F641 = Field(.{
     .fiat = @import("test_curve.zig"),
     .field_order = 641,
     .encoded_length = 2,
-    .field_bits = 16,
-    .d = 10,
+    .field_bits = 10,
 });
