@@ -468,7 +468,7 @@ test "basic qap" {
         635, 330, 637, 321,
         4,   634, 324, 320,
         640, 536, 640, 107,
-    }, qap.a);
+    }, qap.a.items);
 
     try expectEqualFe(fe.F641, &.{
         3,   529, 323, 427,
@@ -477,7 +477,7 @@ test "basic qap" {
         0,   0,   0,   0,
         0,   0,   0,   0,
         0,   0,   0,   0,
-    }, qap.b);
+    }, qap.b.items);
 
     try expectEqualFe(fe.F641, &.{
         0,   0,   0,   0,
@@ -486,7 +486,7 @@ test "basic qap" {
         4,   423, 322, 534,
         635, 330, 637, 321,
         4,   634, 324, 320,
-    }, qap.c);
+    }, qap.c.items);
 }
 
 test "langrage interpolate over finite field" {
