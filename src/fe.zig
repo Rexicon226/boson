@@ -262,10 +262,11 @@ pub fn Field(comptime params: FieldParams) type {
         pub fn format(
             fe: Fe,
             comptime _: []const u8,
-            _: std.fmt.FormatOptions,
+            options: std.fmt.FormatOptions,
             writer: anytype,
         ) !void {
-            try writer.print("{d}", .{fe.toInt()});
+            const int = fe.toInt();
+            try std.fmt.formatInt(int, 10, .lower, options, writer);
         }
     };
 }

@@ -6,6 +6,8 @@ const boson = @import("boson.zig");
 
 const Variable = Flat.Variable;
 const Qap = boson.Qap;
+const Polynomial = boson.Polynomial;
+const Matrix = boson.Matrix;
 const assert = std.debug.assert;
 
 const EPSILON = 1e-9;
@@ -40,8 +42,14 @@ pub fn main() !void {
 
     std.debug.print("{}\n", .{flat});
 
+    const r = try flat.solve(allocator);
+    defer allocator.free(r);
+
     const qap = try Qap(fe.F641).fromFlat(flat, allocator);
     defer qap.deinit(allocator);
 
-    std.debug.print("{}\n", .{qap});
+    var S = try Matrix(fe.F641).initCoerce(allocator, r, 1);
+    defer S.deinit(allocator);
+
+    std.debug.print("{}\n\n", .{qap});
 }

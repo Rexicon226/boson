@@ -2,21 +2,23 @@ const std = @import("std");
 const Flat = @import("Flat.zig");
 const fe = @import("fe.zig");
 const Variable = Flat.Variable;
+const assert = std.debug.assert;
 
 pub fn Qap(Field: type) type {
     return struct {
         rows: usize,
         columns: usize,
 
-        a: []const Field,
-        b: []const Field,
-        c: []const Field,
+        a: M,
+        b: M,
+        c: M,
 
         /// `Z = Π{i = N}(x - i)`
         // z: []const Fe,
 
         const Q = @This();
         const Fe = Finite(Field);
+        const M = Matrix(Field);
 
         fn transpose(
             allocator: std.mem.Allocator,
@@ -133,7 +135,7 @@ pub fn Qap(Field: type) type {
             matrix: []const i32,
             rows: usize,
             cols: usize,
-        ) ![]const Field {
+        ) !M {
             const result = try allocator.alloc(Field, matrix.len);
             for (0..rows) |i| {
                 const slice = matrix[i * cols ..][0..cols];
@@ -141,7 +143,7 @@ pub fn Qap(Field: type) type {
                 defer allocator.free(interpolated);
                 @memcpy(result[i * cols ..][0..cols], interpolated);
             }
-            return result;
+            return M.init(result, cols);
         }
 
         pub fn format(
@@ -151,11 +153,11 @@ pub fn Qap(Field: type) type {
             writer: anytype,
         ) !void {
             try writer.writeAll("A(poly):\n");
-            try q.dumpMatrix(writer, q.a);
+            try writer.print("{}", .{q.a});
             try writer.writeAll("\nB(poly):\n");
-            try q.dumpMatrix(writer, q.b);
+            try writer.print("{}", .{q.b});
             try writer.writeAll("\nC(poly):\n");
-            try q.dumpMatrix(writer, q.c);
+            try writer.print("{}", .{q.c});
             // try writer.print("\nZ:\n{d}\n", .{q.z});
         }
 
@@ -225,26 +227,34 @@ pub fn Qap(Field: type) type {
         // }
 
         pub fn deinit(q: Q, allocator: std.mem.Allocator) void {
-            allocator.free(q.a);
-            allocator.free(q.b);
-            allocator.free(q.c);
+            q.a.deinit(allocator);
+            q.b.deinit(allocator);
+            q.c.deinit(allocator);
             // allocator.free(q.z);
         }
     };
 }
 
-fn Polynomial(Field: type) type {
+pub fn Polynomial(Field: type) type {
     return struct {
         const Poly = @This();
         coeffs: std.ArrayListUnmanaged(Field),
 
-        fn fromCoeffs(allocator: std.mem.Allocator, coeffs: []const Field) !Poly {
+        pub fn fromCoeffs(allocator: std.mem.Allocator, coeffs: []const Field) !Poly {
             var list = try std.ArrayListUnmanaged(Field).initCapacity(allocator, coeffs.len);
             list.appendSliceAssumeCapacity(coeffs);
             return .{ .coeffs = list };
         }
 
-        fn add(poly: *Poly, allocator: std.mem.Allocator, other: Poly) !void {
+        pub fn fromInts(allocator: std.mem.Allocator, coeffs: anytype) !Poly {
+            var list = try std.ArrayList(Field).initCapacity(allocator, coeffs.len);
+            for (coeffs) |x| {
+                list.appendAssumeCapacity(try Field.coerce(@intCast(x)));
+            }
+            return .{ .coeffs = list.moveToUnmanaged() };
+        }
+
+        pub fn add(poly: *Poly, allocator: std.mem.Allocator, other: Poly) !void {
             const o = other.coeffs.items;
             const p = poly.coeffs.items;
 
@@ -264,7 +274,7 @@ fn Polynomial(Field: type) type {
             poly.* = try fromCoeffs(allocator, result);
         }
 
-        fn mul(poly: *Poly, allocator: std.mem.Allocator, other: Poly) !void {
+        pub fn mul(poly: *Poly, allocator: std.mem.Allocator, other: Poly) !void {
             const o = other.coeffs.items;
             const p = poly.coeffs.items;
 
@@ -281,7 +291,7 @@ fn Polynomial(Field: type) type {
             poly.* = try fromCoeffs(allocator, result);
         }
 
-        fn deinit(poly: *Poly, allocator: std.mem.Allocator) void {
+        pub fn deinit(poly: *Poly, allocator: std.mem.Allocator) void {
             poly.coeffs.deinit(allocator);
         }
 
@@ -296,6 +306,65 @@ fn Polynomial(Field: type) type {
                 const d = length - i - 1;
                 try writer.print("{}*x^{}", .{ poly.coeffs.items[d], d });
                 if (i != length - 1) try writer.writeAll(" + ");
+            }
+        }
+    };
+}
+
+pub fn Matrix(Field: type) type {
+    return struct {
+        items: []const Field,
+        rows: usize,
+        columns: usize,
+
+        const M = @This();
+
+        pub fn init(items: []const Field, columns: usize) !M {
+            return .{
+                .items = items,
+                .rows = items.len / columns,
+                .columns = columns,
+            };
+        }
+
+        pub fn initOwned(allocator: std.mem.Allocator, items: []const Field, columns: usize) !M {
+            return .{
+                .items = try allocator.dupe(Field, items),
+                .rows = items.len / columns,
+                .columns = columns,
+            };
+        }
+
+        pub fn initCoerce(allocator: std.mem.Allocator, items: anytype, columns: usize) !M {
+            const fields = try allocator.alloc(Field, items.len);
+            for (items, fields) |item, *field| field.* = try Field.coerce(@intCast(item));
+            return .{
+                .items = fields,
+                .rows = fields.len / columns,
+                .columns = columns,
+            };
+        }
+
+        pub fn deinit(m: M, allocator: std.mem.Allocator) void {
+            allocator.free(m.items);
+        }
+
+        pub fn format(
+            m: M,
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            var max_width: usize = 0;
+            for (m.items) |item| {
+                const len = std.fmt.count("{d}", .{item});
+                max_width = @max(len, max_width);
+            }
+            for (0..m.rows) |i| {
+                try writer.print(
+                    "{d: >[1]}\n",
+                    .{ m.items[i * m.columns ..][0..m.columns], max_width },
+                );
             }
         }
     };

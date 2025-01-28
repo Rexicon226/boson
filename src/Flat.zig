@@ -14,7 +14,7 @@ pub const Variable = enum(u64) {
     }
 
     pub fn newConstant(constant: i32) Variable {
-        const unsigned = @as(u32, @bitCast(constant));
+        const unsigned: u32 = @bitCast(constant);
         return @enumFromInt(@as(u64, unsigned) << 32);
     }
 
@@ -65,7 +65,7 @@ pub fn setVar(
     vars: std.AutoArrayHashMap(Variable, void),
 ) void {
     if (variable.isConstant()) {
-        array[0] += @bitCast(variable.getConstant());
+        array[0] += variable.getConstant();
     } else {
         array[vars.getIndex(variable).?] += 1;
     }
@@ -83,11 +83,24 @@ pub fn getVar(
     }
 }
 
-fn solve(
+pub fn solve(
     flat: *const Flat,
-    variables: std.AutoArrayHashMap(Variable, void),
     allocator: std.mem.Allocator,
 ) ![]const i32 {
+    var variables = vars: {
+        var list = std.AutoArrayHashMap(Variable, void).init(allocator);
+        try list.putNoClobber(.one, {});
+        for (flat.inputs) |input| try list.putNoClobber(input, {});
+        try list.putNoClobber(.out, {});
+        for (flat.instructions) |inst| {
+            if (std.mem.indexOfScalar(Variable, flat.inputs, inst.dest) != null) continue;
+            if (inst.dest == .out) continue;
+            try list.putNoClobber(inst.dest, {});
+        }
+        break :vars list;
+    };
+    defer variables.deinit();
+
     var r = try allocator.alloc(i32, variables.count());
     @memset(r, 0);
     r[0] = 1;
