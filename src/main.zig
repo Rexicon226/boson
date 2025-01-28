@@ -159,7 +159,6 @@ const Variable = enum(u64) {
 };
 
 fn Qap(Field: type) type {
-    const Fe = Finite(Field);
     return struct {
         rows: usize,
         columns: usize,
@@ -172,6 +171,7 @@ fn Qap(Field: type) type {
         // z: []const Fe,
 
         const Q = @This();
+        const Fe = Finite(Field);
 
         fn transpose(
             allocator: std.mem.Allocator,
@@ -212,8 +212,12 @@ fn Qap(Field: type) type {
             const num_variables = variables.count();
             const total_size = flat.instructions.len * num_variables;
             const A = try allocator.alloc(i32, total_size);
+            defer allocator.free(A);
             const B = try allocator.alloc(i32, total_size);
+            defer allocator.free(B);
             const C = try allocator.alloc(i32, total_size);
+            defer allocator.free(C);
+
             @memset(A, 0);
             @memset(B, 0);
             @memset(C, 0);
@@ -253,8 +257,11 @@ fn Qap(Field: type) type {
             const rows = num_variables;
 
             const At = try transpose(allocator, A, cols, rows);
+            defer allocator.free(At);
             const Bt = try transpose(allocator, B, cols, rows);
+            defer allocator.free(Bt);
             const Ct = try transpose(allocator, C, cols, rows);
+            defer allocator.free(Ct);
 
             const Ai = try interpolateMatrix(allocator, At, rows, cols);
             const Bi = try interpolateMatrix(allocator, Bt, rows, cols);
@@ -286,6 +293,7 @@ fn Qap(Field: type) type {
             for (0..rows) |i| {
                 const slice = matrix[i * cols ..][0..cols];
                 const interpolated = try Fe.interpolate(allocator, slice);
+                defer allocator.free(interpolated);
                 @memcpy(result[i * cols ..][0..cols], interpolated);
             }
             return result;
@@ -368,8 +376,36 @@ fn Qap(Field: type) type {
     };
 }
 
+fn Polynomial(Field: type) type {
+    return struct {
+        const Poly = @This();
+        coeffs: std.ArrayListUnmanaged(Field),
+
+        fn fromCoeffs(allocator: std.mem.Allocator, coeffs: []const Field) !Poly {
+            var list = try std.ArrayListUnmanaged(Field).initCapacity(allocator, coeffs.len);
+            list.appendSliceAssumeCapacity(allocator, coeffs);
+            return .{ .coeffs = list };
+        }
+
+        pub fn dumpPoly(
+            poly: Poly,
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            for (0..poly.len) |i| {
+                const d = poly.len - i - 1;
+                try writer.print("{}*x^{}", .{ poly[d], d });
+                if (i != poly.len - 1) try writer.writeAll(" + ");
+            }
+        }
+    };
+}
+
 fn Finite(Field: type) type {
     return struct {
+        const Poly = Polynomial(Field);
+
         fn interpolate(
             allocator: std.mem.Allocator,
             points: []const i32,
@@ -378,6 +414,7 @@ fn Finite(Field: type) type {
 
             const F: []const Field = dd: {
                 const F = try allocator.alloc(Field, sum(N));
+                defer allocator.free(F);
                 @memset(F, Field.zero);
                 for (points, 0..) |point, i| {
                     F[sum(i)] = try Field.coerce(@intCast(point));
@@ -399,15 +436,18 @@ fn Finite(Field: type) type {
                 }
                 break :dd result;
             };
+            defer allocator.free(F);
 
-            var P: []const Field = &.{F[N - 1]};
+            var P: []const Field = try allocator.dupe(Field, &.{F[N - 1]});
             for (1..N) |i| {
                 const single = &.{
                     try Field.coerce(-@as(i11, @intCast(N - i))),
                     try Field.fromInt(1),
                 };
                 const multiplied = try mul(allocator, P, single);
+                allocator.free(P);
                 P = try add(allocator, multiplied, &.{F[N - i - 1]});
+                allocator.free(multiplied);
             }
             return P;
         }
@@ -446,15 +486,6 @@ fn Finite(Field: type) type {
             }
             return o;
         }
-
-        fn dumpPoly(poly: []const Field) void {
-            for (0..poly.len) |i| {
-                const d = poly.len - i - 1;
-                std.debug.print("{}*x^{}", .{ poly[d], d });
-                if (i != poly.len - 1) std.debug.print(" + ", .{});
-            }
-            std.debug.print("\n", .{});
-        }
     };
 }
 
@@ -462,7 +493,7 @@ fn dumpMatrix(
     stream: anytype,
     rows: usize,
     cols: usize,
-    /// can be either []const f64 or []const i32
+    /// can be either []const Field or []const i32
     matrix: anytype,
 ) !void {
     for (0..rows) |i| {
@@ -479,13 +510,10 @@ fn dumpMatrix(
 pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
-    const gpa_allocator = switch (builtin.mode) {
+    const allocator = switch (builtin.mode) {
         .Debug => gpa.allocator(),
         else => std.heap.c_allocator,
     };
-    var arena = std.heap.ArenaAllocator.init(gpa_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
 
     var counter: u32 = 0;
     const x = Variable.makeNew(&counter);
@@ -524,9 +552,7 @@ fn expectEqualFe(Field: type, expected: []const Field.IntRepr, actual: []const F
 }
 
 test "basic qap" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    const allocator = std.testing.allocator;
 
     var counter: u32 = 0;
     const x = Variable.makeNew(&counter);
@@ -581,11 +607,10 @@ test "basic qap" {
 
 test "langrage interpolate over finite field" {
     const allocator = std.testing.allocator;
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
 
     const Field = Finite(fe.F641);
-    const result = try Field.interpolate(arena.allocator(), &.{ 1, 0, 1, 0 });
+    const result = try Field.interpolate(allocator, &.{ 1, 0, 1, 0 });
+    defer allocator.free(result);
     try std.testing.expect(result.len == 4);
     try std.testing.expectEqual(8, result[0].toInt());
     try std.testing.expectEqual(416, result[1].toInt());
