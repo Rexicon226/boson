@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) !void {
 
     const test_step = b.step("test", "");
     const test_exe = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/boson.zig"),
         .target = target,
         .optimize = optimize,
     });
