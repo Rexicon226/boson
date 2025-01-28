@@ -700,25 +700,51 @@ test "polynomial mul" {
     const Field = fe.F641;
     const Poly = Polynomial(Field);
 
-    var x = try Poly.fromCoeffs(
-        allocator,
-        &.{
-            try Field.fromInt(1),
-            try Field.fromInt(2),
-        },
-    );
-    defer x.deinit(allocator);
-    var y = try Poly.fromCoeffs(
-        allocator,
-        &.{
-            try Field.fromInt(2),
-            try Field.fromInt(3),
-            try Field.fromInt(4),
-        },
-    );
-    defer y.deinit(allocator);
+    {
+        var x = try Poly.fromCoeffs(
+            allocator,
+            &.{
+                try Field.fromInt(1),
+                try Field.fromInt(2),
+            },
+        );
+        defer x.deinit(allocator);
+        var y = try Poly.fromCoeffs(
+            allocator,
+            &.{
+                try Field.fromInt(2),
+                try Field.fromInt(3),
+                try Field.fromInt(4),
+            },
+        );
+        defer y.deinit(allocator);
 
-    try x.mul(allocator, y);
+        try x.mul(allocator, y);
 
-    try expectEqualFe(Field, &.{ 2, 7, 10, 8 }, x.coeffs.items);
+        try expectEqualFe(Field, &.{ 2, 7, 10, 8 }, x.coeffs.items);
+    }
+
+    {
+        var x = try Poly.fromCoeffs(
+            allocator,
+            &.{
+                try Field.fromInt(1),
+                try Field.fromInt(2),
+                try Field.fromInt(4),
+            },
+        );
+        defer x.deinit(allocator);
+        var y = try Poly.fromCoeffs(
+            allocator,
+            &.{
+                try Field.fromInt(2),
+                try Field.fromInt(3),
+            },
+        );
+        defer y.deinit(allocator);
+
+        try x.mul(allocator, y);
+
+        try expectEqualFe(Field, &.{ 2, 7, 14, 12 }, x.coeffs.items);
+    }
 }

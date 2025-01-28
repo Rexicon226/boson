@@ -9,7 +9,7 @@ Rp.<x> = PolynomialRing(Fp)
 # Poly = Rp.lagrange_polynomial(points)
 # print(f"final: {Poly}")
 
-print((4*x**2 + 2*x + 1) + (3*x + 2))
+print((4*x**2 + 2*x + 1) * (3*x + 2))
 
 
 # L = Matrix(Fp, [
