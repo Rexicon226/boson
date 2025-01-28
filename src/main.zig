@@ -383,20 +383,62 @@ fn Polynomial(Field: type) type {
 
         fn fromCoeffs(allocator: std.mem.Allocator, coeffs: []const Field) !Poly {
             var list = try std.ArrayListUnmanaged(Field).initCapacity(allocator, coeffs.len);
-            list.appendSliceAssumeCapacity(allocator, coeffs);
+            list.appendSliceAssumeCapacity(coeffs);
             return .{ .coeffs = list };
         }
 
-        pub fn dumpPoly(
+        fn add(poly: *Poly, allocator: std.mem.Allocator, other: Poly) !void {
+            const o = other.coeffs.items;
+            const p = poly.coeffs.items;
+
+            const result = try allocator.alloc(Field, @max(o.len, p.len));
+            defer allocator.free(result);
+            @memset(result, Field.zero);
+
+            for (p, 0..) |x, i| {
+                result[i] = x;
+            }
+
+            for (o, 0..) |x, i| {
+                result[i] = result[i].add(x);
+            }
+
+            poly.deinit(allocator);
+            poly.* = try fromCoeffs(allocator, result);
+        }
+
+        fn mul(poly: *Poly, allocator: std.mem.Allocator, other: Poly) !void {
+            const o = other.coeffs.items;
+            const p = poly.coeffs.items;
+
+            const result = try allocator.alloc(Field, o.len + p.len - 1);
+            defer allocator.free(result);
+            @memset(result, Field.zero);
+            for (p, 0..) |x, i| {
+                for (o, 0..) |y, j| {
+                    result[i + j] = result[i + j].add(x.mul(y));
+                }
+            }
+
+            poly.deinit(allocator);
+            poly.* = try fromCoeffs(allocator, result);
+        }
+
+        fn deinit(poly: *Poly, allocator: std.mem.Allocator) void {
+            poly.coeffs.deinit(allocator);
+        }
+
+        pub fn format(
             poly: Poly,
             comptime _: []const u8,
             _: std.fmt.FormatOptions,
             writer: anytype,
         ) !void {
-            for (0..poly.len) |i| {
-                const d = poly.len - i - 1;
-                try writer.print("{}*x^{}", .{ poly[d], d });
-                if (i != poly.len - 1) try writer.writeAll(" + ");
+            const length = poly.coeffs.items.len;
+            for (0..length) |i| {
+                const d = length - i - 1;
+                try writer.print("{}*x^{}", .{ poly.coeffs.items[d], d });
+                if (i != length - 1) try writer.writeAll(" + ");
             }
         }
     };
@@ -438,53 +480,23 @@ fn Finite(Field: type) type {
             };
             defer allocator.free(F);
 
-            var P: []const Field = try allocator.dupe(Field, &.{F[N - 1]});
+            var P = try Poly.fromCoeffs(allocator, &.{F[N - 1]});
             for (1..N) |i| {
-                const single = &.{
+                var single = try Poly.fromCoeffs(allocator, &.{
                     try Field.coerce(-@as(i11, @intCast(N - i))),
                     try Field.fromInt(1),
-                };
-                const multiplied = try mul(allocator, P, single);
-                allocator.free(P);
-                P = try add(allocator, multiplied, &.{F[N - i - 1]});
-                allocator.free(multiplied);
+                });
+                defer single.deinit(allocator);
+                try P.mul(allocator, single);
+                var offset = try Poly.fromCoeffs(allocator, &.{F[N - i - 1]});
+                defer offset.deinit(allocator);
+                try P.add(allocator, offset);
             }
-            return P;
+            return P.coeffs.toOwnedSlice(allocator);
         }
 
         inline fn sum(k: usize) usize {
             return (k * (k + 1)) / 2;
-        }
-
-        fn add(
-            allocator: std.mem.Allocator,
-            a: []const Field,
-            b: []const Field,
-        ) ![]const Field {
-            var o = try allocator.alloc(Field, @max(a.len, b.len));
-            @memset(o, Field.zero);
-            for (a, 0..) |x, i| {
-                o[i] = o[i].add(x);
-            }
-            for (b, 0..) |x, i| {
-                o[i] = o[i].add(x);
-            }
-            return o;
-        }
-
-        fn mul(
-            allocator: std.mem.Allocator,
-            a: []const Field,
-            b: []const Field,
-        ) ![]const Field {
-            const o = try allocator.alloc(Field, a.len + b.len - 1);
-            @memset(o, Field.zero);
-            for (a, 0..) |x, i| {
-                for (b, 0..) |y, j| {
-                    o[i + j] = o[i + j].add(x.mul(y));
-                }
-            }
-            return o;
         }
     };
 }
@@ -616,4 +628,103 @@ test "langrage interpolate over finite field" {
     try std.testing.expectEqual(416, result[1].toInt());
     try std.testing.expectEqual(5, result[2].toInt());
     try std.testing.expectEqual(213, result[3].toInt());
+}
+
+test "polynomial" {
+    const allocator = std.testing.allocator;
+    const Field = fe.F641;
+    const Poly = Polynomial(Field);
+
+    {
+        var x = try Poly.fromCoeffs(
+            allocator,
+            &.{
+                try Field.fromInt(0),
+                try Field.fromInt(1),
+                try Field.fromInt(2),
+                try Field.fromInt(3),
+            },
+        );
+        defer x.deinit(allocator);
+    }
+}
+
+test "polynomial add" {
+    const allocator = std.testing.allocator;
+    const Field = fe.F641;
+    const Poly = Polynomial(Field);
+
+    {
+        var x = try Poly.fromCoeffs(
+            allocator,
+            &.{
+                try Field.fromInt(1),
+                try Field.fromInt(2),
+            },
+        );
+        defer x.deinit(allocator);
+        var y = try Poly.fromCoeffs(
+            allocator,
+            &.{
+                try Field.fromInt(2),
+                try Field.fromInt(3),
+                try Field.fromInt(4),
+            },
+        );
+        defer y.deinit(allocator);
+
+        try x.add(allocator, y);
+        try expectEqualFe(Field, &.{ 3, 5, 4 }, x.coeffs.items);
+    }
+
+    {
+        var x = try Poly.fromCoeffs(
+            allocator,
+            &.{
+                try Field.fromInt(1),
+                try Field.fromInt(2),
+                try Field.fromInt(4),
+            },
+        );
+        defer x.deinit(allocator);
+        var y = try Poly.fromCoeffs(
+            allocator,
+            &.{
+                try Field.fromInt(2),
+                try Field.fromInt(3),
+            },
+        );
+        defer y.deinit(allocator);
+
+        try x.add(allocator, y);
+        try expectEqualFe(Field, &.{ 3, 5, 4 }, x.coeffs.items);
+    }
+}
+
+test "polynomial mul" {
+    const allocator = std.testing.allocator;
+    const Field = fe.F641;
+    const Poly = Polynomial(Field);
+
+    var x = try Poly.fromCoeffs(
+        allocator,
+        &.{
+            try Field.fromInt(1),
+            try Field.fromInt(2),
+        },
+    );
+    defer x.deinit(allocator);
+    var y = try Poly.fromCoeffs(
+        allocator,
+        &.{
+            try Field.fromInt(2),
+            try Field.fromInt(3),
+            try Field.fromInt(4),
+        },
+    );
+    defer y.deinit(allocator);
+
+    try x.mul(allocator, y);
+
+    try expectEqualFe(Field, &.{ 2, 7, 10, 8 }, x.coeffs.items);
 }
