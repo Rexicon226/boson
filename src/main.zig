@@ -306,12 +306,24 @@ fn Qap(Field: type) type {
             writer: anytype,
         ) !void {
             try writer.writeAll("A(poly):\n");
-            try dumpMatrix(writer, q.rows, q.columns, q.a);
+            try q.dumpMatrix(writer, q.a);
             try writer.writeAll("\nB(poly):\n");
-            try dumpMatrix(writer, q.rows, q.columns, q.b);
+            try q.dumpMatrix(writer, q.b);
             try writer.writeAll("\nC(poly):\n");
-            try dumpMatrix(writer, q.rows, q.columns, q.c);
+            try q.dumpMatrix(writer, q.c);
             // try writer.print("\nZ:\n{d}\n", .{q.z});
+        }
+
+        fn dumpMatrix(q: Q, stream: anytype, matrix: []const Field) !void {
+            for (0..q.rows) |i| {
+                try stream.writeAll("[");
+                for (0..q.columns) |j| {
+                    try stream.print("{d}", .{matrix[i * q.columns + j]});
+                    if (j != q.columns - 1) try stream.writeAll(", ");
+                }
+                try stream.writeAll("]");
+                if (i != q.rows - 1) try stream.writeByte('\n');
+            }
         }
 
         // fn check(q: Qap, allocator: std.mem.Allocator, r: []const i32) !void {
@@ -499,24 +511,6 @@ fn Finite(Field: type) type {
             return (k * (k + 1)) / 2;
         }
     };
-}
-
-fn dumpMatrix(
-    stream: anytype,
-    rows: usize,
-    cols: usize,
-    /// can be either []const Field or []const i32
-    matrix: anytype,
-) !void {
-    for (0..rows) |i| {
-        try stream.writeAll("[");
-        for (0..cols) |j| {
-            try stream.print("{d}", .{matrix[i * cols + j]});
-            if (j != cols - 1) try stream.writeAll(", ");
-        }
-        try stream.writeAll("]");
-        if (i != rows - 1) try stream.writeByte('\n');
-    }
 }
 
 pub fn main() !void {
