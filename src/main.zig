@@ -48,8 +48,19 @@ pub fn main() !void {
     const qap = try Qap(fe.F641).fromFlat(flat, allocator);
     defer qap.deinit(allocator);
 
-    var S = try Matrix(fe.F641).initCoerce(allocator, r, 1);
+    var S = try Matrix(fe.F641).initCoerce(allocator, r, r.len);
     defer S.deinit(allocator);
 
-    std.debug.print("{}\n\n", .{qap});
+    const lx = try S.dot(allocator, qap.a);
+    defer lx.deinit(allocator);
+
+    const rx = try S.dot(allocator, qap.b);
+    defer rx.deinit(allocator);
+
+    const ox = try S.dot(allocator, qap.c);
+    defer ox.deinit(allocator);
+
+    std.debug.print("{}\n", .{lx});
+    std.debug.print("{}\n", .{rx});
+    std.debug.print("{}\n", .{ox});
 }

@@ -173,59 +173,6 @@ pub fn Qap(Field: type) type {
             }
         }
 
-        // fn check(q: Qap, allocator: std.mem.Allocator, r: []const i32) !void {
-        //     // As = A . s
-        //     var As: []const f64 = &.{};
-        //     for (0..q.rows, r) |i, s| {
-        //         const slice = q.a[i * q.columns ..][0..q.columns];
-        //         As = try R1CS.add(allocator, As, try R1CS.mul(allocator, &.{@floatFromInt(s)}, slice));
-        //     }
-
-        //     // Bs = B . s
-        //     var Bs: []const f64 = &.{};
-        //     for (0..q.rows, r) |i, s| {
-        //         const slice = q.b[i * q.columns ..][0..q.columns];
-        //         Bs = try R1CS.add(allocator, Bs, try R1CS.mul(allocator, &.{@floatFromInt(s)}, slice));
-        //     }
-
-        //     // Cs = C . s
-        //     var Cs: []const f64 = &.{};
-        //     for (0..q.rows, r) |i, s| {
-        //         const slice = q.c[i * q.columns ..][0..q.columns];
-        //         Cs = try R1CS.add(allocator, Cs, try R1CS.mul(allocator, &.{@floatFromInt(s)}, slice));
-        //     }
-
-        //     // t = As * Bs - Cs
-        //     const o = try R1CS.sub(allocator, try R1CS.mul(allocator, As, Bs), Cs);
-        //     const Z = q.z;
-
-        //     // if (sum(@rem(t, Z)) != 0) invalid
-        //     var n_deg = degree(o).?;
-        //     const d_deg = degree(Z).?;
-
-        //     var remainder = try allocator.dupe(f64, o);
-        //     while (n_deg >= d_deg) {
-        //         const coeff = remainder[n_deg] / Z[d_deg];
-        //         for (0..d_deg + 1) |i| {
-        //             remainder[n_deg - d_deg + i] -= coeff * Z[i];
-        //         }
-        //         n_deg = degree(remainder) orelse break;
-        //     }
-
-        //     // check if there are any non-zero elements in the remainder
-        //     if (degree(remainder) != null) return error.HasRemainder;
-        // }
-
-        // fn degree(poly: []const f64) ?usize {
-        //     var i = poly.len;
-        //     while (i > 0) : (i -= 1) {
-        //         if (@abs(poly[i - 1]) > EPSILON) {
-        //             return i - 1;
-        //         }
-        //     }
-        //     return null; // there is no degree, all zeros.
-        // }
-
         pub fn deinit(q: Q, allocator: std.mem.Allocator) void {
             q.a.deinit(allocator);
             q.b.deinit(allocator);
@@ -281,6 +228,7 @@ pub fn Polynomial(Field: type) type {
             const result = try allocator.alloc(Field, o.len + p.len - 1);
             defer allocator.free(result);
             @memset(result, Field.zero);
+
             for (p, 0..) |x, i| {
                 for (o, 0..) |y, j| {
                     result[i + j] = result[i + j].add(x.mul(y));
@@ -345,6 +293,28 @@ pub fn Matrix(Field: type) type {
             };
         }
 
+        pub fn dot(m: M, allocator: std.mem.Allocator, b: M) !M {
+            if (m.columns != b.rows) return error.InvalidSize;
+
+            const result = try allocator.alloc(Field, m.rows * b.columns);
+            @memset(result, Field.zero);
+
+            for (0..m.rows) |i| {
+                for (0..b.columns) |j| {
+                    for (0..m.columns) |k| {
+                        const multiply = m.items[i * m.columns + k].mul(b.items[k * b.columns + j]);
+                        result[i * b.columns + j] = result[i * b.columns + j].add(multiply);
+                    }
+                }
+            }
+
+            return .{
+                .rows = m.rows,
+                .columns = b.columns,
+                .items = result,
+            };
+        }
+
         pub fn deinit(m: M, allocator: std.mem.Allocator) void {
             allocator.free(m.items);
         }
@@ -362,9 +332,10 @@ pub fn Matrix(Field: type) type {
             }
             for (0..m.rows) |i| {
                 try writer.print(
-                    "{d: >[1]}\n",
+                    "{d: >[1]}",
                     .{ m.items[i * m.columns ..][0..m.columns], max_width },
                 );
+                if (i != m.rows - 1) try writer.writeAll("\n");
             }
         }
     };
