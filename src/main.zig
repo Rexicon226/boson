@@ -48,21 +48,21 @@ pub fn main() !void {
     const qap = try Qap(fe.F641).fromFlat(flat, allocator);
     defer qap.deinit(allocator);
 
-    var lx, var rx, var ox = try qap.solutionPolynomials(allocator, r);
+    var L, var R, var O = try qap.solutionPolynomials(allocator, r);
     defer {
-        lx.deinit(allocator);
-        rx.deinit(allocator);
-        ox.deinit(allocator);
+        L.deinit(allocator);
+        R.deinit(allocator);
+        O.deinit(allocator);
     }
 
-    std.debug.print("L(x) = {}\n", .{lx});
-    std.debug.print("R(x) = {}\n", .{rx});
-    std.debug.print("O(x) = {}\n", .{ox});
+    std.debug.print("L(x) = {}\n", .{L});
+    std.debug.print("R(x) = {}\n", .{R});
+    std.debug.print("O(x) = {}\n", .{O});
 
     var T = T: {
-        var T = try lx.clone(allocator);
-        try T.mul(allocator, rx);
-        try T.sub(allocator, ox);
+        var T = try L.clone(allocator);
+        try T.mul(allocator, R);
+        try T.sub(allocator, O);
         break :T T;
     };
     defer T.deinit(allocator);
@@ -76,5 +76,21 @@ pub fn main() !void {
         rem.deinit(allocator);
     }
 
-    std.debug.print("H(X) = {}\n", .{H});
+    var Qr = Q: {
+        var Q = try H.clone(allocator);
+        try Q.mul(allocator, Z);
+        try Q.add(allocator, O);
+        break :Q Q;
+    };
+    defer Qr.deinit(allocator);
+
+    var Ql = Q: {
+        var Q = try L.clone(allocator);
+        try Q.mul(allocator, R);
+        break :Q Q;
+    };
+    defer Ql.deinit(allocator);
+
+    std.debug.print("Qr(X) = {}\n", .{Qr});
+    std.debug.print("Ql(X) = {}\n", .{Ql});
 }
