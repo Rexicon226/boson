@@ -19,6 +19,7 @@ pub fn Qap(Field: type) type {
         const Q = @This();
         const Fe = Finite(Field);
         const M = Matrix(Field);
+        const Poly = Polynomial(Field);
 
         fn transpose(
             allocator: std.mem.Allocator,
@@ -114,12 +115,6 @@ pub fn Qap(Field: type) type {
             const Bi = try interpolateMatrix(allocator, Bt, rows, cols);
             const Ci = try interpolateMatrix(allocator, Ct, rows, cols);
 
-            // var Z: []const f64 = &.{1};
-            // for (1..cols + 1) |i| Z = try mul(allocator, Z, &.{
-            //     @floatFromInt(-@as(i32, @intCast(i))),
-            //     1,
-            // });
-
             return .{
                 .a = Ai,
                 .b = Bi,
@@ -144,6 +139,47 @@ pub fn Qap(Field: type) type {
                 @memcpy(result[i * cols ..][0..cols], interpolated);
             }
             return M.init(result, cols);
+        }
+
+        pub fn generateSolutionPolynomials(
+            qap: Q,
+            allocator: std.mem.Allocator,
+            r: []const i32,
+        ) !struct { Poly, Poly, Poly } {
+            var S = try Matrix(fe.F641).initCoerce(allocator, r, r.len);
+            defer S.deinit(allocator);
+
+            const lx = try S.dot(allocator, qap.a);
+            defer lx.deinit(allocator);
+
+            const rx = try S.dot(allocator, qap.b);
+            defer rx.deinit(allocator);
+
+            const ox = try S.dot(allocator, qap.c);
+            defer ox.deinit(allocator);
+
+            const lxp = try lx.toPolynomial(allocator);
+            const rxp = try rx.toPolynomial(allocator);
+            const oxp = try ox.toPolynomial(allocator);
+
+            return .{
+                lxp,
+                rxp,
+                oxp,
+            };
+        }
+
+        pub fn generateZeroPolynomial(qap: Q, allocator: std.mem.Allocator) !Poly {
+            var Z = try Poly.fromInts(allocator, &.{1});
+            for (1..qap.columns + 1) |i| {
+                var singleton = try Poly.fromInts(allocator, &.{
+                    -@as(i32, @intCast(i)),
+                    1,
+                });
+                defer singleton.deinit(allocator);
+                try Z.mul(allocator, singleton);
+            }
+            return Z;
         }
 
         pub fn format(
@@ -185,7 +221,7 @@ pub fn Qap(Field: type) type {
 pub fn Polynomial(Field: type) type {
     return struct {
         const Poly = @This();
-        coeffs: std.ArrayListUnmanaged(Field),
+        coeffs: std.ArrayListUnmanaged(Field) = .{},
 
         pub fn fromCoeffs(allocator: std.mem.Allocator, coeffs: []const Field) !Poly {
             var list = try std.ArrayListUnmanaged(Field).initCapacity(allocator, coeffs.len);
@@ -193,7 +229,7 @@ pub fn Polynomial(Field: type) type {
             return .{ .coeffs = list };
         }
 
-        pub fn fromInts(allocator: std.mem.Allocator, coeffs: anytype) !Poly {
+        pub fn fromInts(allocator: std.mem.Allocator, coeffs: []const i32) !Poly {
             var list = try std.ArrayList(Field).initCapacity(allocator, coeffs.len);
             for (coeffs) |x| {
                 list.appendAssumeCapacity(try Field.coerce(@intCast(x)));
@@ -215,6 +251,26 @@ pub fn Polynomial(Field: type) type {
 
             for (o, 0..) |x, i| {
                 result[i] = result[i].add(x);
+            }
+
+            poly.deinit(allocator);
+            poly.* = try fromCoeffs(allocator, result);
+        }
+
+        pub fn sub(poly: *Poly, allocator: std.mem.Allocator, other: Poly) !void {
+            const o = other.coeffs.items;
+            const p = poly.coeffs.items;
+
+            const result = try allocator.alloc(Field, @max(o.len, p.len));
+            defer allocator.free(result);
+            @memset(result, Field.zero);
+
+            for (p, 0..) |x, i| {
+                result[i] = x;
+            }
+
+            for (o, 0..) |x, i| {
+                result[i] = result[i].sub(x);
             }
 
             poly.deinit(allocator);
@@ -313,6 +369,11 @@ pub fn Matrix(Field: type) type {
                 .columns = b.columns,
                 .items = result,
             };
+        }
+
+        pub fn toPolynomial(m: M, allocator: std.mem.Allocator) !Polynomial(Field) {
+            if (m.rows != 1) return error.NotFlatMatrix;
+            return Polynomial(Field).fromCoeffs(allocator, m.items);
         }
 
         pub fn deinit(m: M, allocator: std.mem.Allocator) void {

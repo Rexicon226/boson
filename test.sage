@@ -57,16 +57,15 @@ print(PolyM[0])
 print(S * PolyM[0])
 
 # Create the Lx, Rx & Ox polynomial
-# Lx = Rp(list(S*PolyM[0]))
-# Rx = Rp(list(S*PolyM[1]))
-# Ox = Rp(list(S*PolyM[2]))
-# print("Lx = " + str(Lx))
-# print("Rx = " + str(Rx))
-# print("Ox = " + str(Ox))
+Lx = Rp(list(S*PolyM[0]))
+Rx = Rp(list(S*PolyM[1]))
+Ox = Rp(list(S*PolyM[2]))
+print("Lx = " + str(Lx))
+print("Rx = " + str(Rx))
+print("Ox = " + str(Ox))
 
-# T = Lx * Rx - Ox
-# print("T(X) = ", end="")
-# print(T)
+T = Lx * Rx - Ox
+print(f"T(X) = {T}")
 
 # Z = Rp((x-1)*(x-2)*(x-3)*(x-4))
 # H = T.quo_rem(Z)

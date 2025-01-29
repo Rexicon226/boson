@@ -48,19 +48,19 @@ pub fn main() !void {
     const qap = try Qap(fe.F641).fromFlat(flat, allocator);
     defer qap.deinit(allocator);
 
-    var S = try Matrix(fe.F641).initCoerce(allocator, r, r.len);
-    defer S.deinit(allocator);
+    var lxp, var rxp, var oxp = try qap.generateSolutionPolynomials(allocator, r);
+    defer {
+        lxp.deinit(allocator);
+        rxp.deinit(allocator);
+        oxp.deinit(allocator);
+    }
 
-    const lx = try S.dot(allocator, qap.a);
-    defer lx.deinit(allocator);
+    try lxp.mul(allocator, rxp);
+    try lxp.sub(allocator, oxp);
 
-    const rx = try S.dot(allocator, qap.b);
-    defer rx.deinit(allocator);
+    var Z = try qap.generateZeroPolynomial(allocator);
+    defer Z.deinit(allocator);
 
-    const ox = try S.dot(allocator, qap.c);
-    defer ox.deinit(allocator);
-
-    std.debug.print("{}\n", .{lx});
-    std.debug.print("{}\n", .{rx});
-    std.debug.print("{}\n", .{ox});
+    std.debug.print("{}\n", .{lxp});
+    std.debug.print("Z: {}\n", .{Z});
 }
