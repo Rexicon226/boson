@@ -61,6 +61,26 @@ pub fn main() !void {
     var Z = try qap.generateZeroPolynomial(allocator);
     defer Z.deinit(allocator);
 
-    std.debug.print("{}\n", .{lxp});
+    std.debug.print("before T: {}\n", .{lxp});
     std.debug.print("Z: {}\n", .{Z});
+
+    const T = lxp;
+
+    var n_deg = T.degree().?;
+    const d_deg = Z.degree().?;
+
+    const t = T.coeffs.items;
+    const z = Z.coeffs.items;
+
+    while (n_deg >= d_deg) {
+        const coeff = t[n_deg].mul(z[d_deg].invert());
+        for (0..d_deg + 1) |i| {
+            t[n_deg - d_deg + i] = t[n_deg - d_deg + i].sub(coeff.mul(z[i]));
+        }
+        n_deg = T.degree() orelse break;
+    }
+
+    std.debug.print("t: {}\n", .{T});
+
+    if (T.degree() != null) @panic("has remainder");
 }
