@@ -141,7 +141,7 @@ pub fn Qap(Field: type) type {
             return M.init(result, cols);
         }
 
-        pub fn generateSolutionPolynomials(
+        pub fn solutionPolynomials(
             qap: Q,
             allocator: std.mem.Allocator,
             r: []const i32,
@@ -169,7 +169,7 @@ pub fn Qap(Field: type) type {
             };
         }
 
-        pub fn generateZeroPolynomial(qap: Q, allocator: std.mem.Allocator) !Poly {
+        pub fn zeroPolynomial(qap: Q, allocator: std.mem.Allocator) !Poly {
             var Z = try Poly.fromInts(allocator, &.{1});
             for (1..qap.columns + 1) |i| {
                 var singleton = try Poly.fromInts(allocator, &.{
@@ -295,6 +295,30 @@ pub fn Polynomial(Field: type) type {
             poly.* = try fromCoeffs(allocator, result);
         }
 
+        pub fn quorem(poly: Poly, allocator: std.mem.Allocator, other: Poly) !struct { Poly, Poly } {
+            var remainder = try poly.clone(allocator);
+
+            var n_deg = remainder.degree().?;
+            const d_deg = other.degree().?;
+
+            const t = remainder.coeffs.items;
+            const z = other.coeffs.items;
+
+            var coeffs: std.ArrayListUnmanaged(Field) = .{};
+            while (n_deg >= d_deg) {
+                const coeff = t[n_deg].mul(z[d_deg].invert());
+                try coeffs.append(allocator, coeff);
+                for (0..d_deg + 1) |i| {
+                    t[n_deg - d_deg + i] = t[n_deg - d_deg + i].sub(coeff.mul(z[i]));
+                }
+                n_deg = remainder.degree() orelse break;
+            }
+            std.mem.reverse(Field, coeffs.items);
+
+            const H: Poly = .{ .coeffs = coeffs };
+            return .{ H, remainder };
+        }
+
         pub fn degree(poly: Poly) ?usize {
             const p = poly.coeffs.items;
             var i = p.len;
@@ -304,6 +328,10 @@ pub fn Polynomial(Field: type) type {
                 }
             }
             return null;
+        }
+
+        pub fn clone(poly: Poly, allocator: std.mem.Allocator) !Poly {
+            return .{ .coeffs = try poly.coeffs.clone(allocator) };
         }
 
         pub fn deinit(poly: *Poly, allocator: std.mem.Allocator) void {

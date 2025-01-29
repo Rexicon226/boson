@@ -48,39 +48,33 @@ pub fn main() !void {
     const qap = try Qap(fe.F641).fromFlat(flat, allocator);
     defer qap.deinit(allocator);
 
-    var lxp, var rxp, var oxp = try qap.generateSolutionPolynomials(allocator, r);
+    var lx, var rx, var ox = try qap.solutionPolynomials(allocator, r);
     defer {
-        lxp.deinit(allocator);
-        rxp.deinit(allocator);
-        oxp.deinit(allocator);
+        lx.deinit(allocator);
+        rx.deinit(allocator);
+        ox.deinit(allocator);
     }
 
-    try lxp.mul(allocator, rxp);
-    try lxp.sub(allocator, oxp);
+    std.debug.print("L(x) = {}\n", .{lx});
+    std.debug.print("R(x) = {}\n", .{rx});
+    std.debug.print("O(x) = {}\n", .{ox});
 
-    var Z = try qap.generateZeroPolynomial(allocator);
+    var T = T: {
+        var T = try lx.clone(allocator);
+        try T.mul(allocator, rx);
+        try T.sub(allocator, ox);
+        break :T T;
+    };
+    defer T.deinit(allocator);
+
+    var Z = try qap.zeroPolynomial(allocator);
     defer Z.deinit(allocator);
 
-    std.debug.print("before T: {}\n", .{lxp});
-    std.debug.print("Z: {}\n", .{Z});
-
-    const T = lxp;
-
-    var n_deg = T.degree().?;
-    const d_deg = Z.degree().?;
-
-    const t = T.coeffs.items;
-    const z = Z.coeffs.items;
-
-    while (n_deg >= d_deg) {
-        const coeff = t[n_deg].mul(z[d_deg].invert());
-        for (0..d_deg + 1) |i| {
-            t[n_deg - d_deg + i] = t[n_deg - d_deg + i].sub(coeff.mul(z[i]));
-        }
-        n_deg = T.degree() orelse break;
+    var H, var rem = try T.quorem(allocator, Z);
+    defer {
+        H.deinit(allocator);
+        rem.deinit(allocator);
     }
 
-    std.debug.print("t: {}\n", .{T});
-
-    if (T.degree() != null) @panic("has remainder");
+    std.debug.print("H(X) = {}\n", .{H});
 }
