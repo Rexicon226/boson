@@ -295,6 +295,17 @@ pub fn Polynomial(Field: type) type {
             poly.* = try fromCoeffs(allocator, result);
         }
 
+        pub fn degree(poly: Poly) ?usize {
+            const p = poly.coeffs.items;
+            var i = p.len;
+            while (i > 0) : (i -= 1) {
+                if (!p[i - 1].isZero()) {
+                    return i - 1;
+                }
+            }
+            return null;
+        }
+
         pub fn deinit(poly: *Poly, allocator: std.mem.Allocator) void {
             poly.coeffs.deinit(allocator);
         }
@@ -657,4 +668,26 @@ test "polynomial mul" {
 
         try expectEqualFe(Field, &.{ 2, 7, 14, 12 }, x.coeffs.items);
     }
+}
+
+test "polynomial degree" {
+    const allocator = std.testing.allocator;
+    const Field = fe.F641;
+    const Poly = Polynomial(Field);
+
+    var x = try Poly.fromCoeffs(
+        allocator,
+        &.{
+            try Field.fromInt(1),
+            try Field.fromInt(2),
+            try Field.fromInt(4),
+            Field.zero,
+            try Field.fromInt(5),
+            Field.zero,
+            Field.zero,
+        },
+    );
+    defer x.deinit(allocator);
+
+    try std.testing.expectEqual(4, x.degree());
 }
