@@ -4,21 +4,13 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable(.{
-        .name = "boson",
+    const boson = b.addModule("boson", .{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/boson.zig"),
     });
-    b.installArtifact(exe);
-    exe.linkLibC();
 
-    const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
-    const run_step = b.step("run", "");
-    run_step.dependOn(&run.step);
-
-    const test_step = b.step("test", "");
+    const test_step = b.step("test", "Test the Boson library");
     const test_exe = b.addTest(.{
         .root_source_file = b.path("src/boson.zig"),
         .target = target,
@@ -26,4 +18,25 @@ pub fn build(b: *std.Build) !void {
     });
     const test_run = b.addRunArtifact(test_exe);
     test_step.dependOn(&test_run.step);
+
+    inline for (.{
+        .{ "groth16", "examples/groth16.zig" },
+    }) |entry| {
+        const name, const path = entry;
+
+        const example = b.addExecutable(.{
+            .name = name,
+            .target = target,
+            .optimize = optimize,
+            .root_source_file = b.path(path),
+        });
+        example.root_module.addImport("boson", boson);
+
+        b.installArtifact(example);
+
+        const run = b.addRunArtifact(example);
+        if (b.args) |args| run.addArgs(args);
+        const run_step = b.step("run-" ++ name, "Runs the " ++ name ++ " example");
+        run_step.dependOn(&run.step);
+    }
 }

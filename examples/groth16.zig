@@ -1,13 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const fe = @import("fe.zig");
-const Flat = @import("Flat.zig");
-const boson = @import("boson.zig");
+const boson = @import("boson");
 
-const Variable = Flat.Variable;
+const F641 = boson.curves.F641;
+const Flatcode = boson.Flatcode;
+const Variable = Flatcode.Variable;
 const Qap = boson.Qap;
-const Polynomial = boson.Polynomial;
-const Matrix = boson.Matrix;
 const assert = std.debug.assert;
 
 const EPSILON = 1e-9;
@@ -27,7 +25,7 @@ pub fn main() !void {
     const tmp2 = Variable.new(&counter);
     const five = Variable.newConstant(5);
 
-    const flat: Flat = .{
+    const flat: Flatcode = .{
         .inputs = &.{x},
         .instructions = &.{
             // y = x
@@ -45,8 +43,10 @@ pub fn main() !void {
     const r = try flat.solve(allocator);
     defer allocator.free(r);
 
-    const qap = try Qap(fe.F641).fromFlat(flat, allocator);
+    const qap = try Qap(F641).fromFlat(flat, allocator);
     defer qap.deinit(allocator);
+
+    std.debug.print("qap: {}\n", .{qap});
 
     var L, var R, var O = try qap.solutionPolynomials(allocator, r);
     defer {

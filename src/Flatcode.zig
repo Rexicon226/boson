@@ -83,7 +83,7 @@ pub fn getVar(
 }
 
 pub fn solve(
-    flat: *const Flat,
+    flat: *const Flatcode,
     allocator: std.mem.Allocator,
 ) ![]const i32 {
     var variables = vars: {
@@ -126,7 +126,7 @@ pub fn solve(
 }
 
 pub fn format(
-    flat: Flat,
+    flat: Flatcode,
     comptime _: []const u8,
     _: std.fmt.FormatOptions,
     writer: anytype,
@@ -161,7 +161,7 @@ pub fn format(
     }
 }
 
-const Flat = @This();
+const Flatcode = @This();
 const std = @import("std");
 
 const assert = std.debug.assert;
