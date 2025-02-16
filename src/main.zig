@@ -21,10 +21,10 @@ pub fn main() !void {
     };
 
     var counter: u32 = 0;
-    const x = Variable.makeNew(&counter);
-    const y = Variable.makeNew(&counter);
-    const tmp1 = Variable.makeNew(&counter);
-    const tmp2 = Variable.makeNew(&counter);
+    const x = Variable.new(&counter);
+    const y = Variable.new(&counter);
+    const tmp1 = Variable.new(&counter);
+    const tmp2 = Variable.new(&counter);
     const five = Variable.newConstant(5);
 
     const flat: Flat = .{
@@ -76,6 +76,8 @@ pub fn main() !void {
         rem.deinit(allocator);
     }
 
+    std.debug.print("H(X) = {}\n", .{H});
+
     var Qr = Q: {
         var Q = try H.clone(allocator);
         try Q.mul(allocator, Z);
@@ -91,6 +93,7 @@ pub fn main() !void {
     };
     defer Ql.deinit(allocator);
 
+    std.debug.print("\nProver has to prove that Qr(X) equals Ql(X)\n", .{});
     std.debug.print("Qr(X) = {}\n", .{Qr});
     std.debug.print("Ql(X) = {}\n", .{Ql});
 }

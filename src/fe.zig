@@ -259,6 +259,13 @@ pub fn Field(comptime params: FieldParams) type {
             return fe;
         }
 
+        /// Returns an random point in the finite field, which is evenly sampled from `0 <= X < order`.
+        pub fn sample(random: std.Random) Fe {
+            const value = random.uintLessThan(IntRepr, field_order);
+            // `uintLessThan` guarantees the value will be representable.
+            return fromInt(value) catch unreachable;
+        }
+
         pub fn format(
             fe: Fe,
             comptime _: []const u8,

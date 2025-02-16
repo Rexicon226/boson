@@ -13,9 +13,6 @@ pub fn Qap(Field: type) type {
         b: M,
         c: M,
 
-        /// `Z = Π{i = N}(x - i)`
-        // z: []const Fe,
-
         const Q = @This();
         const Fe = Finite(Field);
         const M = Matrix(Field);
@@ -510,10 +507,10 @@ test "basic qap" {
     const allocator = std.testing.allocator;
 
     var counter: u32 = 0;
-    const x = Variable.makeNew(&counter);
-    const y = Variable.makeNew(&counter);
-    const tmp1 = Variable.makeNew(&counter);
-    const tmp2 = Variable.makeNew(&counter);
+    const x = Variable.new(&counter);
+    const y = Variable.new(&counter);
+    const tmp1 = Variable.new(&counter);
+    const tmp2 = Variable.new(&counter);
     const five = Variable.newConstant(5);
 
     const flat: Flat = .{

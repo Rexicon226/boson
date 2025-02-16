@@ -5,10 +5,9 @@ pub const Variable = enum(u64) {
     none,
     one,
     out,
-
     _,
 
-    pub fn makeNew(counter: *u32) Variable {
+    pub fn new(counter: *u32) Variable {
         defer counter.* += 1;
         return @enumFromInt(counter.* + @typeInfo(Variable).Enum.fields.len);
     }
