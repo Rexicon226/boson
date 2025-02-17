@@ -86,10 +86,7 @@ pub fn Field(comptime params: FieldParams) type {
         }
 
         /// Element as an integer.
-        pub const IntRepr = meta.Int(
-            .unsigned,
-            std.math.ceilPowerOfTwo(u64, params.field_bits) catch unreachable,
-        );
+        pub const IntRepr = meta.Int(.unsigned, encoded_length * 8);
         pub const SignedRepr = meta.Int(.signed, params.field_bits + 1);
 
         /// Create a field element from an integer.

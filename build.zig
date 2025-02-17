@@ -21,6 +21,7 @@ pub fn build(b: *std.Build) !void {
 
     inline for (.{
         .{ "groth16", "examples/groth16.zig" },
+        .{ "playground", "examples/playground.zig" },
     }) |entry| {
         const name, const path = entry;
 
