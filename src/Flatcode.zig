@@ -9,7 +9,7 @@ pub const Variable = enum(u64) {
 
     pub fn new(counter: *u32) Variable {
         defer counter.* += 1;
-        return @enumFromInt(counter.* + @typeInfo(Variable).Enum.fields.len);
+        return @enumFromInt(counter.* + @typeInfo(Variable).@"enum".fields.len);
     }
 
     pub fn newConstant(constant: i32) Variable {
